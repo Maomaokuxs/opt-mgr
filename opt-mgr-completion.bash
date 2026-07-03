@@ -4,7 +4,7 @@ _opt_mgr_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="install update remove rollback skip unskip info list set-repo check upgrade cleanup clean"
+    local commands="install remove rollback skip unskip info list set-repo check upgrade cleanup clean"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))

@@ -9,31 +9,31 @@ usage() {
 
 用法:
 
-  opt-mgr install  <应用名> <文件路径> [选项]    # 安装或更新应用
-  opt-mgr remove   <应用名>                      # 卸载应用
-  opt-mgr list                                   # 查看所有已管理应用
-  opt-mgr info     <应用名>                      # 查看应用详情 + 远端对比
-  opt-mgr check    <应用名>                      # 检查 GitHub 更新
-  opt-mgr upgrade  <应用名>                      # 下载升级 (不填应用名=全部)
-  opt-mgr skip     <应用名>                      # 从批量升级中排除
-  opt-mgr unskip   <应用名>                      # 恢复批量升级
-  opt-mgr rollback <应用名>                      # 回退到上一版本
-  opt-mgr clean    all | <应用名>...             # 清理回退备份
+  opt-mgr install  <应用名> [文件] [选项]    # 安装或更新应用 (无文件=自动下载)
+  opt-mgr remove   <应用名>                  # 卸载应用
+  opt-mgr list                               # 查看所有已管理应用
+  opt-mgr info     <应用名>                  # 查看应用详情 + 远端对比
+  opt-mgr check    <应用名>                  # 检查 GitHub 更新
+  opt-mgr upgrade  <应用名>                  # 下载升级 (不填应用名=全部)
+  opt-mgr skip     <应用名>                  # 从批量升级中排除
+  opt-mgr unskip   <应用名>                  # 恢复批量升级
+  opt-mgr rollback <应用名>                  # 回退到上一版本
+  opt-mgr clean    all | <应用名>...         # 清理回退备份
 
 install 选项:
 
-  --icon <路径>                                  # 指定图标文件
-  --exec <前缀>                                  # Exec前缀, {} 占位二进制路径
-  --repo <owner/repo>                            # GitHub 仓库 (首次配置后自动检查更新)
-  --pattern <模式>                               # asset 匹配模式 (可选, 自动按架构识别)
+  --icon <路径>                              # 指定图标文件
+  --exec <前缀>                              # Exec前缀, {} 占位二进制路径
+  --repo <owner/repo>                        # GitHub 仓库 (首次配置后自动检查更新)
+  --pattern <模式>                           # asset 匹配模式 (可选, 自动按架构识别)
 
 支持的文件类型:
 
-  .tar.gz / .tgz                                 # 解压到 /opt/<应用名>/
-  .jar                                           # java -jar 启动
-  .rpm                                           # dnf 系统安装
-  .AppImage                                      # 复制到 /opt/<应用名>/ 直接执行
-  其他二进制文件                                 # 同上
+  .tar.gz / .tgz                             # 解压到 /opt/<应用名>/
+  .jar                                       # java -jar 启动
+  .rpm                                       # dnf 系统安装
+  .AppImage                                  # 复制到 /opt/<应用名>/ 直接执行
+  其他二进制文件                             # 同上
 
 示例:
 
@@ -153,10 +153,16 @@ DESKTOP
 
 # ---------- install ----------
 cmd_install() {
-    local app="$1" file="$2"
-    [ $# -ge 2 ] || usage
+    [ $# -ge 1 ] || usage
+    local app="$1"
+    shift
 
-    shift 2
+    # 如果第二个参数不是文件路径，视为选项解析（无文件参数）
+    local file=""
+    if [ $# -gt 0 ] && [ -f "$1" ] && [[ ! "$1" =~ ^-- ]]; then
+        file="$1"; shift
+    fi
+
     local icon_opt="" exec_prefix="" repo="" pattern=""
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -170,23 +176,59 @@ cmd_install() {
     done
 
     local target_dir="/opt/$app"
-    if [ -d "$target_dir" ] && [ -n "$repo" ]; then
-        # 已有目录，仅补仓库信息
+    if [ -d "$target_dir" ] && [ -n "$repo" ] && [ -z "$file" ]; then
+        # 已有目录 + --repo + 无文件 → 仅补仓库信息
         init_conf
         set_conf "$app" "opt_dir" "$target_dir"
         set_conf "$app" "repo" "$repo"
-        local pat="${pattern:-$(default_pattern "$(detect_file_type "$file")")}"
-        set_conf "$app" "asset_pattern" "$pat"
-        local ver=$(echo "$(basename "$file")" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
+        set_conf "$app" "asset_pattern" "${pattern:-*}"
+        local ver=$(get_conf "$app" "binary" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
         [ -n "$ver" ] && set_conf "$app" "version" "$ver"
-        [ -z "$(get_conf "$app" "type")" ] && set_conf "$app" "type" "$(detect_file_type "$file")"
+        [ -z "$(get_conf "$app" "type")" ] && set_conf "$app" "type" "$(detect_file_type "$(get_conf app binary)")"
         echo "已为 $app 配置 GitHub 仓库: $repo"
         return
     fi
 
+    # 无文件 + 有仓库 → 自动下载
+    if [ -z "$file" ]; then
+        local repo_cfg=$(get_conf "$app" "repo")
+        [ -z "$repo_cfg" ] && { echo "错误: 需要文件路径或 --repo 配置"; exit 1; }
+        echo "===== 自动下载 $app ====="
+        local json=$(gh_api_latest "$repo_cfg")
+        local api_rc=$?
+        if [ $api_rc -ne 0 ]; then
+            [ $api_rc -ne 2 ] && echo "错误: 请求 GitHub API 失败"
+            exit 1
+        fi
+        local app_type=$(get_conf "$app" "type")
+        local pat=$(get_conf "$app" "asset_pattern")
+        pat="${pat:-$(default_pattern "$app_type")}"
+        local result download_url asset_name
+        result=$(echo "$json" | python3 -c "
+import sys, json, fnmatch
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    if fnmatch.fnmatch(a['name'], '${pat:-*}'):
+        print(a['browser_download_url'])
+        print(a['name'])
+        break
+" 2>/dev/null)
+        download_url=$(echo "$result" | head -1)
+        asset_name=$(echo "$result" | tail -1)
+        [ -z "$download_url" ] && { echo "错误: 未匹配到下载文件"; exit 1; }
+        echo "下载: $asset_name"
+        local tmp_dir="$HOME/.cache/opt-mgr/downloads"
+        mkdir -p "$tmp_dir"
+        file="$tmp_dir/$asset_name"
+        download_file "$download_url" "$file" || { echo "错误: 下载失败"; rm -f "$file"; exit 1; }
+        echo ""
+    fi
+
+    # 已存在则走更新
     if [ -d "$target_dir" ]; then
         echo "应用已存在, 执行更新..."
         cmd_update "$app" "$file"
+        [ -n "$repo" ] && set_conf "$app" "repo" "$repo"
         return
     fi
 
@@ -933,7 +975,6 @@ cmd_info() {
 
 case "$1" in
     install)  shift; cmd_install "$@" ;;
-    update)   shift; cmd_update   "$@" ;;
     remove)   cmd_remove   "${2:-}" ;;
     rollback) cmd_rollback "${2:-}" ;;
     skip)     cmd_skip     "${2:-}" ;;
