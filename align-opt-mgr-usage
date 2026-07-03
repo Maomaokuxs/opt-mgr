@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""对齐 opt-mgr 用法中 # 注释列"""
-import sys, os, unicodedata
+"""对齐 opt-mgr 帮助输出中所有 # 注释列"""
+import re, sys, os, unicodedata
 
 FILE = os.path.expanduser("~/.local/bin/opt-mgr")
 
@@ -10,55 +10,73 @@ def display_width(s):
         w += 2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1
     return w
 
+def align_lines(lines):
+    """对齐一组行中的 # 注释"""
+    if not lines:
+        return lines
+    # 计算最大宽度（只算有注释的行）
+    max_w = 0
+    for line in lines:
+        stripped = line.rstrip()
+        for sep in ('  #', ' #', '\t#'):
+            if sep in stripped:
+                body = stripped[:stripped.rindex(sep)].rstrip()
+                max_w = max(max_w, display_width(body))
+                break
+    if max_w == 0:
+        return lines
+
+    result = []
+    for line in lines:
+        stripped = line.rstrip()
+        matched = False
+        for sep in ('  #', ' #', '\t#'):
+            if sep in stripped:
+                idx = stripped.rindex(sep)
+                body = stripped[:idx].rstrip()
+                comment = stripped[idx + len(sep) - 1:]  # 含 '#'
+                pad = max_w - display_width(body) + 4
+                result.append(f"{body}{' ' * pad}{comment}")
+                matched = True
+                break
+        if not matched:
+            result.append(stripped)
+    return result
+
 def align():
     with open(FILE) as f:
         content = f.read()
 
-    # 找到 "用法:" 到下一个分区标题之间的行
-    start = content.find("用法:\n")
-    if start < 0:
-        print("错误: 找不到 '用法:'"); sys.exit(1)
+    m = re.search(r"cat <<'EOF'\n(.*?)\nEOF", content, re.DOTALL)
+    if not m:
+        print("错误: 找不到 usage 函数"); sys.exit(1)
 
-    end = content.find("\ninstall 选项:", start)
-    if end < 0:
-        print("错误: 找不到 'install 选项:'"); sys.exit(1)
+    raw = m.group(1)
+    section_lines = raw.split('\n')
 
-    old = content[start:end]
-    lines = []
-    for raw in old.strip().split('\n')[1:]:  # 跳过 "用法:"
-        # 分离命令和注释
-        cmd = raw.strip()
-        comment = ""
-        if '  #' in cmd:
-            idx = cmd.rindex('  #')
-            comment = cmd[idx+2:]  # 含 '#'
-            cmd = cmd[:idx].rstrip()
-        elif ' #' in cmd:
-            idx = cmd.rindex(' #')
-            comment = cmd[idx+1:]
-            cmd = cmd[:idx].rstrip()
-        elif '\t#' in cmd:
-            idx = cmd.rindex('\t#')
-            comment = cmd[idx+1:]
-            cmd = cmd[:idx].rstrip()
-        if cmd:
-            lines.append((f"  {cmd}", comment))  # 统一加前导空格
+    # 按空行分组，每组独立对齐
+    groups = []
+    buf = []
+    for line in section_lines:
+        stripped = line.rstrip()
+        if stripped == '':
+            groups.append(buf)
+            buf = []
+        else:
+            buf.append(stripped)
+    if buf:
+        groups.append(buf)
 
-    if not lines:
-        print("错误: 没有需要对齐的行"); sys.exit(1)
+    new_sections = []
+    for g in groups:
+        new_sections.append('\n'.join(align_lines(g)))
 
-    max_w = max(display_width(cmd) for cmd, _ in lines)
-
-    new_block = "用法:\n"
-    for cmd, comment in lines:
-        pad = max_w - display_width(cmd) + 4
-        new_block += f"{cmd}{' ' * pad}{comment}\n"
-
-    content = content.replace(old, new_block.rstrip('\n'))
+    new_body = '\n'.join(new_sections)
+    content = content.replace(raw, new_body)
     with open(FILE, 'w') as f:
         f.write(content)
 
-    print(f"对齐完成 ({len(lines)} 行)")
+    print(f"对齐完成 ({len(section_lines)} 行)")
 
 if __name__ == "__main__":
     align()
