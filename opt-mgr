@@ -176,16 +176,25 @@ cmd_install() {
     done
 
     local target_dir="/opt/$app"
-    if [ -d "$target_dir" ] && [ -n "$repo" ] && [ -z "$file" ]; then
-        # 已有目录 + --repo + 无文件 → 仅补仓库信息
+    local real_dir=$(opt_dir "$app")
+    if [ -d "$real_dir" ] && [ -n "$repo" ] && [ -z "$file" ]; then
+        # 已有安装 + --repo + 无文件 → 仅补仓库信息
         init_conf
-        set_conf "$app" "opt_dir" "$target_dir"
+        set_conf "$app" "opt_dir" "$real_dir"
         set_conf "$app" "repo" "$repo"
         set_conf "$app" "asset_pattern" "${pattern:-*}"
         local ver=$(get_conf "$app" "binary" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
         [ -n "$ver" ] && set_conf "$app" "version" "$ver"
-        [ -z "$(get_conf "$app" "type")" ] && set_conf "$app" "type" "$(detect_file_type "$(get_conf app binary)")"
+        [ -z "$(get_conf "$app" "type")" ] && set_conf "$app" "type" "$(detect_file_type "$(get_conf "$app" "binary")")"
         echo "已为 $app 配置 GitHub 仓库: $repo"
+        return
+    fi
+
+    # 已存在则走更新
+    if [ -d "$real_dir" ] && [ -n "$file" ]; then
+        echo "应用已存在, 执行更新..."
+        cmd_update "$app" "$file"
+        [ -n "$repo" ] && set_conf "$app" "repo" "$repo"
         return
     fi
 
@@ -232,7 +241,7 @@ for a in data.get('assets', []):
     fi
 
     # 已存在则走更新
-    if [ -d "$target_dir" ]; then
+    if [ -d "$real_dir" ]; then
         echo "应用已存在, 执行更新..."
         cmd_update "$app" "$file"
         [ -n "$repo" ] && set_conf "$app" "repo" "$repo"
@@ -951,7 +960,8 @@ cmd_info() {
     echo "  执行命令: ${exec_cmd:-无}"
     echo "  图标:     ${icon:-无}"
     [ -n "$repo" ] && echo "  仓库:     $repo"
-    [ -n "$pattern" ] && echo "  匹配模式: $pattern"
+    local pat=$(get_conf "$app" "asset_pattern")
+    [ -n "$pat" ] && echo "  匹配模式: $pat"
     [ "$skip" = "1" ] && echo "  批量升级: 已排除"
 
     if [ -n "$repo" ]; then
