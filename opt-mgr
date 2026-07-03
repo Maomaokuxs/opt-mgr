@@ -10,6 +10,7 @@ usage() {
   opt-mgr install  <应用名> <文件路径> [选项]
   opt-mgr update   <应用名> <文件路径>
   opt-mgr remove   <应用名>
+  opt-mgr rollback <应用名>
   opt-mgr list
   opt-mgr check    [应用名]
   opt-mgr upgrade  [应用名]
