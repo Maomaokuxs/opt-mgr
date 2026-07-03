@@ -765,7 +765,7 @@ for a in data.get('assets', []):
     local tmp_dir="$HOME/.cache/opt-mgr/downloads"
     mkdir -p "$tmp_dir"
     local local_file="$tmp_dir/$asset_name"
-    download_file "$download_url" "$local_file" >/dev/null 2>&1 || {
+    download_file "$download_url" "$local_file" || {
         echo "  [$idx/$total] $app: 下载失败"; rm -f "$local_file"; return 1
     }
 
