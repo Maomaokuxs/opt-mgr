@@ -684,16 +684,14 @@ cmd_upgrade() {
         [ "$total" -eq 0 ] && { echo "无配置 GitHub 仓库的应用。"; return; }
 
         echo "升级第三方应用:"
-        local upgraded=0 failed=0 skipped=0 idx=0
-        declare -a updated_apps
+        local upgraded=0 failed=0 idx=0
         for app in "${apps[@]}"; do
             idx=$((idx + 1))
-            local result
-            result=$(do_upgrade_one "$app" "$idx" "$total")
-            case $? in
+            do_upgrade_one "$app" "$idx" "$total"
+            local rc=$?
+            case $rc in
                 0) upgraded=$((upgraded + 1)) ;;
-                2) skipped=$((skipped + 1)) ;;
-                *) failed=$((failed + 1)) ;;
+                1) failed=$((failed + 1)) ;;
             esac
         done
         [ $upgraded -eq 0 ] && [ $failed -eq 0 ] && echo "  无须任何处理。"
