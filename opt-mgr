@@ -203,6 +203,13 @@ cmd_install() {
         local app_type=$(get_conf "$app" "type")
         local pat=$(get_conf "$app" "asset_pattern")
         pat="${pat:-$(default_pattern "$app_type")}"
+        local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+        local latest_ver=$(extract_version "$latest_tag")
+        local current_ver=$(get_conf "$app" "version")
+        if [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ]; then
+            echo "已是最新版本 ($current_ver)"
+            return 0
+        fi
         local result download_url asset_name
         result=$(echo "$json" | python3 -c "
 import sys, json, fnmatch
