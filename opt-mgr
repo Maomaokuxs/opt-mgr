@@ -379,24 +379,23 @@ for a in data.get('assets', []):
     fi
 
     [ -f "$file" ] || { echo "错误: 找不到文件 $file"; exit 1; }
-    [ -d "$target_dir" ] || { echo "错误: $target_dir 不存在，请先使用 install"; exit 1; }
 
     local app_type=$(get_conf "$app" "type")
+    local target_dir=$(opt_dir "$app")
+    [ "$app_type" = "rpm" ] || [ -d "$target_dir" ] || { echo "错误: $target_dir 不存在，请先使用 install"; exit 1; }
+
     local old_binary=$(get_conf "$app" "binary")
     local old_exec=$(get_conf "$app" "exec")
     local old_icon=$(get_conf "$app" "icon")
     local name=$(basename "$file")
     local ftype=$(detect_file_type "$file")
 
-    echo "===== 更新 $app ====="
-
+    local binary="" exec_cmd="" icon=""
     local saved_icon=""
     if [ -n "$old_icon" ] && [ -f "$old_icon" ]; then
         saved_icon=$(mktemp)
         cp "$old_icon" "$saved_icon"
     fi
-
-    local binary="" exec_cmd="" icon=""
 
     case "$ftype" in
         tar)
@@ -405,12 +404,10 @@ for a in data.get('assets', []):
             unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
             [ "$unique" -eq 1 ] && strip_flag="--strip-components=1"
             sudo tar -xzf "$file" -C "$target_dir" $strip_flag --no-same-permissions --overwrite
-            echo "  -> 已解压到 $target_dir"
 
             binary=$(get_conf "$app" "binary")
             [ ! -f "${target_dir}/$binary" ] && binary=$(find_binary "$target_dir" "$app")
             sudo chmod +x "${target_dir}/$binary"
-            echo "  -> 可执行文件: $binary"
 
             exec_cmd=$(get_conf "$app" "exec")
             if [ -z "$exec_cmd" ]; then
@@ -436,7 +433,6 @@ for a in data.get('assets', []):
                 echo "  -> 清理旧文件: $old_binary"
             fi
             [ "$ftype" != "jar" ] && sudo chmod +x "${target_dir}/$name"
-            echo "  -> 已更新: $name"
 
             exec_cmd=$(get_conf "$app" "exec")
             if [ -n "$exec_cmd" ] && echo "$exec_cmd" | grep -q "{}"; then
@@ -453,7 +449,6 @@ for a in data.get('assets', []):
 
         rpm)
             binary="$name"
-            echo "  -> 安装 RPM: $name"
             if command -v dnf5 &>/dev/null || dnf --version 2>/dev/null | grep -q "dnf5"; then
                 sudo dnf install -y "$file"
             else
@@ -461,7 +456,6 @@ for a in data.get('assets', []):
             fi
             set_conf "$app" "binary" "$binary"
             set_conf "$app" "type" "rpm"
-            echo "===== 更新完成 ====="
             return
             ;;
     esac
@@ -470,7 +464,6 @@ for a in data.get('assets', []):
         local icon_name=$(basename "$old_icon")
         sudo cp "$saved_icon" "${target_dir}/$icon_name"
         icon="${target_dir}/$icon_name"
-        echo "  -> 已恢复旧图标"
     elif [ -z "$icon" ]; then
         icon="$old_icon"
     fi
@@ -481,7 +474,6 @@ for a in data.get('assets', []):
     create_desktop "$app" "$exec_cmd" "$icon" "${app^} 应用"
 
     [ -n "$saved_icon" ] && rm -f "$saved_icon"
-    echo "===== 更新完成 ====="
 }
 
 # ---------- remove ----------
