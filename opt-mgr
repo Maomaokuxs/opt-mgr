@@ -7,17 +7,17 @@ CONF_DIR="$HOME/.config/opt-mgr"
 usage() {
     cat <<'EOF'
 用法:
-  opt-mgr install  <应用名> <文件路径> [选项]          # 首次安装应用
-  opt-mgr update   <应用名> [文件路径]                 # 更新应用 (无文件则自动下载)
-  opt-mgr remove   <应用名>                            # 卸载应用
-  opt-mgr list                                         # 查看所有已管理应用
-  opt-mgr info     <应用名>                            # 查看应用详情 + 远端对比
-  opt-mgr check    <应用名>                            # 检查 GitHub 更新
-  opt-mgr upgrade  <应用名>                            # 下载升级 (不填应用名=全部)
-  opt-mgr skip     <应用名>                            # 从批量升级中排除
-  opt-mgr unskip   <应用名>                            # 恢复批量升级
-  opt-mgr rollback <应用名>                            # 回退到上一版本
-  opt-mgr cleanup                                      # 清理回退备份
+  opt-mgr install  <应用名> <文件路径> [选项]    # 首次安装应用
+  opt-mgr update   <应用名> [文件路径]         # 更新应用 (无文件则自动下载)
+  opt-mgr remove   <应用名>                # 卸载应用
+  opt-mgr list                          # 查看所有已管理应用
+  opt-mgr info     <应用名>                # 查看应用详情 + 远端对比
+  opt-mgr check    <应用名>                # 检查 GitHub 更新
+  opt-mgr upgrade  <应用名>                # 下载升级 (不填应用名=全部)
+  opt-mgr skip     <应用名>                # 从批量升级中排除
+  opt-mgr unskip   <应用名>                # 恢复批量升级
+  opt-mgr rollback <应用名>                # 回退到上一版本
+  opt-mgr cleanup  <应用名>                # 清理回退备份 (不填=全部)
 
 install 选项:
   --icon <路径>     指定图标文件
@@ -852,11 +852,23 @@ cmd_unskip() {
 
 # ---------- cleanup ----------
 cmd_cleanup() {
+    local target="${1:-}"
     local dir="$HOME/.cache/opt-mgr/backups"
+
+    if [ -n "$target" ]; then
+        local app=$(resolve_app "$target")
+        local app_dir="$dir/$app"
+        [ ! -d "$app_dir" ] && { echo "$app: 没有备份文件。"; return; }
+        local count=$(find "$app_dir" -type f | wc -l)
+        rm -rf "$app_dir"
+        echo "$app: $count 个备份文件已删除。"
+        return
+    fi
+
     [ ! -d "$dir" ] && { echo "无备份文件。"; return; }
     local count=$(find "$dir" -type f | wc -l)
     rm -rf "$dir"/*
-    echo "清理完成, $count 个备份文件已删除。"
+    echo "全部清理完成, $count 个备份文件已删除。"
 }
 
 # ---------- info ----------
@@ -918,7 +930,7 @@ case "$1" in
     skip)     cmd_skip     "${2:-}" ;;
     unskip)   cmd_unskip   "${2:-}" ;;
     info)     cmd_info     "${2:-}" ;;
-    cleanup)  cmd_cleanup ;;
+    cleanup)  cmd_cleanup  "${2:-}" ;;
     list)     cmd_list ;;
     set-repo) cmd_set_repo "${2:-}" "$3" "$4" ;;
     check)    cmd_check    "${2:-}" ;;
