@@ -2,7 +2,7 @@
 """对齐 opt-mgr 帮助输出中所有 # 注释列（全局对齐）"""
 import re, sys, os, unicodedata
 
-FILE = os.path.expanduser("~/.local/opt-mgr/opt-mgr")
+FILE = os.path.expanduser("~/.local/bin/opt-mgr")
 
 def display_width(s):
     w = 0
