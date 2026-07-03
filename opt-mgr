@@ -687,8 +687,8 @@ cmd_upgrade() {
         local upgraded=0 failed=0 idx=0
         for app in "${apps[@]}"; do
             idx=$((idx + 1))
-            do_upgrade_one "$app" "$idx" "$total"
-            local rc=$?
+            local rc=0
+            do_upgrade_one "$app" "$idx" "$total" || rc=$?
             case $rc in
                 0) upgraded=$((upgraded + 1)) ;;
                 1) failed=$((failed + 1)) ;;
