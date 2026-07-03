@@ -9,8 +9,7 @@ usage() {
 
 用法:
 
-  opt-mgr install  <应用名> <文件路径> [选项]    # 首次安装应用
-  opt-mgr update   <应用名> [文件路径]           # 更新应用 (无文件则自动下载)
+  opt-mgr install  <应用名> <文件路径> [选项]    # 安装或更新应用
   opt-mgr remove   <应用名>                      # 卸载应用
   opt-mgr list                                   # 查看所有已管理应用
   opt-mgr info     <应用名>                      # 查看应用详情 + 远端对比
@@ -186,8 +185,9 @@ cmd_install() {
     fi
 
     if [ -d "$target_dir" ]; then
-        echo "应用 $app 已存在于 $target_dir, 请使用 update 命令"
-        exit 1
+        echo "应用已存在, 执行更新..."
+        cmd_update "$app" "$file"
+        return
     fi
 
     local ftype=$(detect_file_type "$file")
