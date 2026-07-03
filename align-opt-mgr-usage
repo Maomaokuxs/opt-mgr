@@ -10,37 +10,33 @@ def display_width(s):
         w += 2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1
     return w
 
-def align_lines(lines):
-    """对齐一组行中的 # 注释"""
-    if not lines:
-        return lines
-    # 计算最大宽度（只算有注释的行）
+def align_group(block):
+    """对齐一个段落内的 # 注释"""
+    # 分离 header（# 注释前没有内容或纯标题行）和数据行
     max_w = 0
-    for line in lines:
-        stripped = line.rstrip()
+    for line in block:
         for sep in ('  #', ' #', '\t#'):
-            if sep in stripped:
-                body = stripped[:stripped.rindex(sep)].rstrip()
+            if sep in line:
+                body = line[:line.rindex(sep)].rstrip()
                 max_w = max(max_w, display_width(body))
                 break
     if max_w == 0:
-        return lines
+        return block
 
     result = []
-    for line in lines:
-        stripped = line.rstrip()
+    for line in block:
         matched = False
         for sep in ('  #', ' #', '\t#'):
-            if sep in stripped:
-                idx = stripped.rindex(sep)
-                body = stripped[:idx].rstrip()
-                comment = stripped[idx + len(sep) - 1:]  # 含 '#'
+            if sep in line:
+                idx = line.rindex(sep)
+                body = line[:idx].rstrip()
+                comment = line[idx + len(sep) - 1:]
                 pad = max_w - display_width(body) + 4
                 result.append(f"{body}{' ' * pad}{comment}")
                 matched = True
                 break
         if not matched:
-            result.append(stripped)
+            result.append(line.rstrip())
     return result
 
 def align():
@@ -52,31 +48,35 @@ def align():
         print("错误: 找不到 usage 函数"); sys.exit(1)
 
     raw = m.group(1)
-    section_lines = raw.split('\n')
+    raw_lines = raw.split('\n')
 
-    # 按空行分组，每组独立对齐
+    # 按空行分组，每个分组独立对齐
     groups = []
     buf = []
-    for line in section_lines:
-        stripped = line.rstrip()
-        if stripped == '':
-            groups.append(buf)
-            buf = []
+    for line in raw_lines:
+        if line.rstrip() == '':
+            if buf:
+                groups.append(align_group(buf))
+                buf = []
+            groups.append(None)  # 标记空行
         else:
-            buf.append(stripped)
+            buf.append(line.rstrip())
     if buf:
-        groups.append(buf)
+        groups.append(align_group(buf))
 
-    new_sections = []
+    # 重建：列表段用 \n 连接，None 变空行
+    result_lines = []
     for g in groups:
-        new_sections.append('\n'.join(align_lines(g)))
-
-    new_body = '\n'.join(new_sections)
+        if g is None:
+            result_lines.append('')
+        else:
+            result_lines.extend(g)
+    new_body = '\n'.join(result_lines)
     content = content.replace(raw, new_body)
     with open(FILE, 'w') as f:
         f.write(content)
 
-    print(f"对齐完成 ({len(section_lines)} 行)")
+    print(f"对齐完成 ({len(raw_lines)} 行)")
 
 if __name__ == "__main__":
     align()

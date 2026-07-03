@@ -7,6 +7,7 @@ CONF_DIR="$HOME/.config/opt-mgr"
 usage() {
     cat <<'EOF'
 用法:
+
   opt-mgr install  <应用名> <文件路径> [选项]    # 首次安装应用
   opt-mgr update   <应用名> [文件路径]           # 更新应用 (无文件则自动下载)
   opt-mgr remove   <应用名>                      # 卸载应用
@@ -18,18 +19,24 @@ usage() {
   opt-mgr unskip   <应用名>                      # 恢复批量升级
   opt-mgr rollback <应用名>                      # 回退到上一版本
   opt-mgr clean    all | <应用名>...             # 清理回退备份
+
 install 选项:
-  --icon <路径>                                  # 指定图标文件
-  --exec <前缀>                                  # Exec前缀, {} 占位二进制路径
-  --repo <owner/repo>                            # GitHub 仓库 (首次配置后自动检查更新)
-  --pattern <模式>                               # asset 匹配模式 (可选, 自动按架构识别)
+
+  --icon <路径>          # 指定图标文件
+  --exec <前缀>          # Exec前缀, {} 占位二进制路径
+  --repo <owner/repo>    # GitHub 仓库 (首次配置后自动检查更新)
+  --pattern <模式>       # asset 匹配模式 (可选, 自动按架构识别)
+
 支持的文件类型:
-  .tar.gz / .tgz                                 # 解压到 /opt/<应用名>/
-  .jar                                           # java -jar 启动
-  .rpm                                           # dnf 系统安装
-  .AppImage                                      # 复制到 /opt/<应用名>/ 直接执行
-  其他二进制文件                                 # 同上
+
+  .tar.gz / .tgz    # 解压到 /opt/<应用名>/
+  .jar              # java -jar 启动
+  .rpm              # dnf 系统安装
+  .AppImage         # 复制到 /opt/<应用名>/ 直接执行
+  其他二进制文件    # 同上
+
 示例:
+
   opt-mgr install kazumi ~/Downloads/Kazumi_2.1.8_amd64.tar.gz \
     --repo Predidit/Kazumi
   opt-mgr install hmcl ~/Downloads/HMCL-3.15.1.jar \
