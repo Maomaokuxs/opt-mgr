@@ -11,9 +11,13 @@ usage() {
   opt-mgr update   <应用名> <文件路径>
   opt-mgr remove   <应用名>
   opt-mgr rollback <应用名>
+  opt-mgr skip     <应用名>
+  opt-mgr unskip   <应用名>
+  opt-mgr info     <应用名>
   opt-mgr list
   opt-mgr check    [应用名]
   opt-mgr upgrade  [应用名]
+  opt-mgr cleanup
 
 install 选项:
   --icon <路径>     指定图标文件
@@ -505,6 +509,7 @@ cmd_list() {
         local target_dir=$(opt_dir "$app")
         local ver=$(get_conf "$app" "version")
         local repo=$(get_conf "$app" "repo")
+        local skip=$(get_conf "$app" "skip")
         echo "  $app"
         echo "    路径:    $target_dir"
         echo "    类型:    ${app_type:-未知}  |  版本: ${ver:-未知}"
@@ -512,6 +517,7 @@ cmd_list() {
         echo "    Exec:    ${exec_cmd:-}"
         echo "    图标:    ${icon:-无}"
         [ -n "$repo" ] && echo "    GitHub:  $repo"
+        [ "$skip" = "1" ] && echo "    批量升级: 已排除"
         found=1
     done
     [ $found -eq 0 ] && echo "  (无)"
@@ -671,7 +677,8 @@ cmd_upgrade() {
             [ -f "$conf" ] || continue
             local app=$(basename "$conf" .conf)
             local repo=$(get_conf "$app" "repo")
-            [ -n "$repo" ] && apps+=("$app")
+            local skip=$(get_conf "$app" "skip")
+            [ -n "$repo" ] && [ "$skip" != "1" ] && apps+=("$app")
         done
 
         local total=${#apps[@]}
@@ -832,6 +839,78 @@ cmd_rollback() {
     echo "$app: 已回退到 $prev_ver"
 }
 
+# ---------- skip / unskip ----------
+cmd_skip() {
+    local app=$(resolve_app "${1:-}")
+    [ -z "$app" ] && { echo "用法: opt-mgr skip <应用名>"; exit 1; }
+    set_conf "$app" "skip" "1"
+    echo "$app: 已从批量升级中排除"
+}
+
+cmd_unskip() {
+    local app=$(resolve_app "${1:-}")
+    [ -z "$app" ] && { echo "用法: opt-mgr unskip <应用名>"; exit 1; }
+    set_conf "$app" "skip" ""
+    echo "$app: 已恢复批量升级"
+}
+
+# ---------- cleanup ----------
+cmd_cleanup() {
+    local dir="$HOME/.cache/opt-mgr/backups"
+    [ ! -d "$dir" ] && { echo "无备份文件。"; return; }
+    local count=$(find "$dir" -type f | wc -l)
+    rm -rf "$dir"/*
+    echo "清理完成, $count 个备份文件已删除。"
+}
+
+# ---------- info ----------
+cmd_info() {
+    local app=$(resolve_app "${1:-}")
+    [ -z "$app" ] && { echo "用法: opt-mgr info <应用名>"; exit 1; }
+
+    local app_type=$(get_conf "$app" "type")
+    local binary=$(get_conf "$app" "binary")
+    local exec_cmd=$(get_conf "$app" "exec")
+    local icon=$(get_conf "$app" "icon")
+    local target_dir=$(opt_dir "$app")
+    local ver=$(get_conf "$app" "version")
+    local repo=$(get_conf "$app" "repo")
+    local skip=$(get_conf "$app" "skip")
+
+    local skip_info="否"; [ "$skip" = "1" ] && skip_info="是"
+    echo "$app:"
+    echo "  本地版本: ${ver:-未知}"
+    echo "  类型:     ${app_type:-未知}"
+    echo "  路径:     ${target_dir:-无}"
+    echo "  执行命令: ${exec_cmd:-无}"
+    echo "  图标:     ${icon:-无}"
+    [ -n "$repo" ] && echo "  仓库:     $repo"
+    [ -n "$pattern" ] && echo "  匹配模式: $pattern"
+    [ "$skip" = "1" ] && echo "  批量升级: 已排除"
+
+    if [ -n "$repo" ]; then
+        local json api_rc
+        json=$(gh_api_latest "$repo")
+        api_rc=$?
+        if [ $api_rc -eq 0 ] && [ -n "$json" ]; then
+            local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+            local latest_ver=$(extract_version "$latest_tag")
+            local published=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('published_at','')[:10])" 2>/dev/null)
+            echo ""
+            echo "  远程版本: ${latest_ver:-?}  ($published)"
+            if [ -n "$ver" ] && [ "$ver" = "$latest_ver" ]; then
+                echo "  状态:     ✓ 已是最新"
+            elif [ -n "$latest_ver" ]; then
+                echo "  状态:     ✦ 有新版本可用!"
+            fi
+        elif [ $api_rc -eq 2 ]; then
+            echo "  远程状态: API 限流"
+        else
+            echo "  远程状态: 请求失败"
+        fi
+    fi
+}
+
 # ---------- 入口 ----------
 [ $# -ge 1 ] || usage
 
@@ -840,6 +919,10 @@ case "$1" in
     update)   shift; cmd_update   "$@" ;;
     remove)   cmd_remove   "${2:-}" ;;
     rollback) cmd_rollback "${2:-}" ;;
+    skip)     cmd_skip     "${2:-}" ;;
+    unskip)   cmd_unskip   "${2:-}" ;;
+    info)     cmd_info     "${2:-}" ;;
+    cleanup)  cmd_cleanup ;;
     list)     cmd_list ;;
     set-repo) cmd_set_repo "${2:-}" "$3" "$4" ;;
     check)    cmd_check    "${2:-}" ;;
