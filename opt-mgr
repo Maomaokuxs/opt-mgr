@@ -8,21 +8,23 @@ usage() {
     cat <<'EOF'
 用法:
   opt-mgr install  <应用名> <文件路径> [选项]
-  opt-mgr update   <应用名> <文件路径>
+  opt-mgr update   <应用名> [文件路径]
   opt-mgr remove   <应用名>
-  opt-mgr rollback <应用名>
-  opt-mgr skip     <应用名>
-  opt-mgr unskip   <应用名>
-  opt-mgr info     <应用名>
   opt-mgr list
-  opt-mgr check    [应用名]
-  opt-mgr upgrade  [应用名]
-  opt-mgr cleanup
+  opt-mgr info     <应用名>
+  
+  opt-mgr check    [应用名]               # 检查更新
+  opt-mgr upgrade  [应用名]               # 下载并安装更新
+  
+  opt-mgr skip     <应用名>               # 批量升级时跳过
+  opt-mgr unskip   <应用名>
+  opt-mgr rollback <应用名>               # 回退到上一版本
+  opt-mgr cleanup                        # 清理回退备份
 
 install 选项:
   --icon <路径>     指定图标文件
   --exec <前缀>     Exec前缀, {} 占位二进制路径
-  --repo <owner/repo>  GitHub 仓库地址 (一劳永逸配置)
+  --repo <owner/repo>  GitHub 仓库 (首次配置后自动检查更新)
   --pattern <模式>  asset 匹配模式 (可选, 自动按架构识别)
 
 支持的文件类型:
