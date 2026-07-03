@@ -170,6 +170,20 @@ cmd_install() {
     done
 
     local target_dir="/opt/$app"
+    if [ -d "$target_dir" ] && [ -n "$repo" ]; then
+        # 已有目录，仅补仓库信息
+        init_conf
+        set_conf "$app" "opt_dir" "$target_dir"
+        set_conf "$app" "repo" "$repo"
+        local pat="${pattern:-$(default_pattern "$(detect_file_type "$file")")}"
+        set_conf "$app" "asset_pattern" "$pat"
+        local ver=$(echo "$(basename "$file")" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
+        [ -n "$ver" ] && set_conf "$app" "version" "$ver"
+        [ -z "$(get_conf "$app" "type")" ] && set_conf "$app" "type" "$(detect_file_type "$file")"
+        echo "已为 $app 配置 GitHub 仓库: $repo"
+        return
+    fi
+
     if [ -d "$target_dir" ]; then
         echo "应用 $app 已存在于 $target_dir, 请使用 update 命令"
         exit 1
@@ -753,13 +767,13 @@ for a in data.get('assets', []):
     fi
 
     local ver_info=""
-    [ -n "$current_ver" ] && ver_info="  $current_ver → $latest_ver"
+    [ -n "$current_ver" ] && ver_info="  正在升级:  $current_ver → $latest_ver"
     echo "  [$idx/$total] $app:$ver_info"
 
     local tmp_dir="$HOME/.cache/opt-mgr/downloads"
     mkdir -p "$tmp_dir"
     local local_file="$tmp_dir/$asset_name"
-    download_file "$download_url" "$local_file" || {
+    download_file "$download_url" "$local_file" >/dev/null 2>&1 || {
         echo "  [$idx/$total] $app: 下载失败"; rm -f "$local_file"; return 1
     }
 
