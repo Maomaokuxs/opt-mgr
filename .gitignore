@@ -3,3 +3,4 @@
 !/opt-mgr
 !/.gitignore
 !/opt-mgr-completion.bash
+!/align-opt-mgr-usage
