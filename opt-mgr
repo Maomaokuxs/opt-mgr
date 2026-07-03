@@ -12,14 +12,12 @@ usage() {
   opt-mgr remove   <应用名>
   opt-mgr list
   opt-mgr info     <应用名>
-  
-  opt-mgr check    [应用名]               # 检查更新
-  opt-mgr upgrade  [应用名]               # 下载并安装更新
-  
-  opt-mgr skip     <应用名>               # 批量升级时跳过
+  opt-mgr check    [应用名]
+  opt-mgr upgrade  [应用名]
+  opt-mgr skip     <应用名>
   opt-mgr unskip   <应用名>
-  opt-mgr rollback <应用名>               # 回退到上一版本
-  opt-mgr cleanup                        # 清理回退备份
+  opt-mgr rollback <应用名>
+  opt-mgr cleanup
 
 install 选项:
   --icon <路径>     指定图标文件
@@ -35,7 +33,6 @@ install 选项:
   其他二进制文件     同上
 
 示例:
-  # 按架构自动匹配, 无需指定 --pattern
   opt-mgr install kazumi ~/Downloads/Kazumi_2.1.8_amd64.tar.gz \
     --repo Predidit/Kazumi
   opt-mgr install hmcl ~/Downloads/HMCL-3.15.1.jar \
@@ -43,9 +40,6 @@ install 选项:
     --exec 'java -Dglass.gtk.uiScale=1.5 -jar {}'
   opt-mgr install splayer ~/Downloads/splayer-3.1.1-x86_64.rpm \
     --repo SPlayer-Dev/SPlayer
-
-  opt-mgr check              # 检查更新
-  opt-mgr upgrade            # 一键升级全部
 EOF
     exit 1
 }
