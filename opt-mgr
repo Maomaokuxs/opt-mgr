@@ -616,7 +616,7 @@ cmd_check() {
         pattern="${pattern:-$(default_pattern "$app_type")}"
 
         echo ""
-        echo "  [$app] 仓库: $repo"
+        echo "[$app] 仓库: $repo"
 
         local json
         json=$(gh_api_latest "$repo")
@@ -694,7 +694,7 @@ cmd_upgrade() {
                 1) failed=$((failed + 1)) ;;
             esac
         done
-        [ $upgraded -eq 0 ] && [ $failed -eq 0 ] && echo "  无须任何处理。"
+        [ $upgraded -eq 0 ] && [ $failed -eq 0 ] && echo "无须任何处理。"
         [ $failed -gt 0 ] && echo "完成: $upgraded 成功, $failed 失败"
         check_rate_limit
         return
@@ -705,7 +705,7 @@ cmd_upgrade() {
     local rc
     do_upgrade_one "$app" 1 1
     rc=$?
-    [ $rc -eq 2 ] && echo "  $app: 无须任何处理。"
+    [ $rc -eq 2 ] && echo "$app: 无须任何处理。"
 }
 
 do_upgrade_one() {
@@ -716,7 +716,7 @@ do_upgrade_one() {
     local target_dir=$(opt_dir "$app")
     local app_type=$(get_conf "$app" "type")
     if [ "$app_type" != "rpm" ] && [ ! -d "$target_dir" ]; then
-        echo "  [$idx/$total] $app: 目录不存在, 跳过"
+        echo "[$idx/$total] $app: 目录不存在, 跳过"
         return 1
     fi
 
@@ -724,7 +724,7 @@ do_upgrade_one() {
     json=$(gh_api_latest "$repo")
     local api_rc=$?
     if [ $api_rc -ne 0 ]; then
-        [ $api_rc -ne 2 ] && echo "  [$idx/$total] $app: API 请求失败"
+        [ $api_rc -ne 2 ] && echo "[$idx/$total] $app: API 请求失败"
         return 1
     fi
 
@@ -752,26 +752,26 @@ for a in data.get('assets', []):
     asset_name=$(echo "$result" | tail -1)
 
     if [ -z "$download_url" ]; then
-        echo "  [$idx/$total] $app: 未匹配到下载文件"
+        echo "[$idx/$total] $app: 未匹配到下载文件"
         return 1
     fi
 
     local ver_info=""
     [ -n "$current_ver" ] && ver_info="  正在升级:  $current_ver → $latest_ver"
-    echo "  [$idx/$total] $app:$ver_info"
+    echo "[$idx/$total] $app:$ver_info"
 
     local tmp_dir="$HOME/.cache/opt-mgr/downloads"
     mkdir -p "$tmp_dir"
     local local_file="$tmp_dir/$asset_name"
     download_file "$download_url" "$local_file" || {
-        echo "  [$idx/$total] $app: 下载失败"; rm -f "$local_file"; return 1
+        echo "[$idx/$total] $app: 下载失败"; rm -f "$local_file"; return 1
     }
 
     if cmd_update "$app" "$local_file"; then
         set_conf "$app" "version" "$latest_ver"
         return 0
     else
-        echo "  [$idx/$total] $app: 安装失败"
+        echo "[$idx/$total] $app: 安装失败"
         return 1
     fi
 }
