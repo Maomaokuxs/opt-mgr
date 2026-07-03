@@ -182,7 +182,12 @@ cmd_install() {
         init_conf
         set_conf "$app" "opt_dir" "$real_dir"
         set_conf "$app" "repo" "$repo"
-        set_conf "$app" "asset_pattern" "${pattern:-*}"
+        local existing_pat=$(get_conf "$app" "asset_pattern")
+        if [ -n "$pattern" ]; then
+            set_conf "$app" "asset_pattern" "$pattern"
+        elif [ -z "$existing_pat" ] || [ "$existing_pat" = "*" ]; then
+            set_conf "$app" "asset_pattern" "$(default_pattern "$(get_conf "$app" "type")")"
+        fi
         local ver=$(get_conf "$app" "binary" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
         [ -n "$ver" ] && set_conf "$app" "version" "$ver"
         [ -z "$(get_conf "$app" "type")" ] && set_conf "$app" "type" "$(detect_file_type "$(get_conf "$app" "binary")")"
@@ -212,25 +217,16 @@ cmd_install() {
         local app_type=$(get_conf "$app" "type")
         local pat=$(get_conf "$app" "asset_pattern")
         pat="${pat:-$(default_pattern "$app_type")}"
-        local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+        local latest_tag=$(gh_tag_name "$json")
         local latest_ver=$(extract_version "$latest_tag")
         local current_ver=$(get_conf "$app" "version")
         if [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ]; then
             echo "已是最新版本 ($current_ver)"
             return 0
         fi
-        local result download_url asset_name
-        result=$(echo "$json" | python3 -c "
-import sys, json, fnmatch
-data = json.load(sys.stdin)
-for a in data.get('assets', []):
-    if fnmatch.fnmatch(a['name'], '${pat:-*}'):
-        print(a['browser_download_url'])
-        print(a['name'])
-        break
-" 2>/dev/null)
-        download_url=$(echo "$result" | head -1)
-        asset_name=$(echo "$result" | tail -1)
+        local download_url asset_name
+        download_url=$(match_asset "$json" "$pat" url)
+        asset_name=$(match_asset "$json" "$pat" name)
         [ -z "$download_url" ] && { echo "错误: 未匹配到下载文件"; exit 1; }
         echo "下载: $asset_name"
         local tmp_dir="$HOME/.cache/opt-mgr/downloads"
@@ -403,24 +399,15 @@ cmd_update() {
             exit 1
         fi
 
-        local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+        local latest_tag=$(gh_tag_name "$json")
         local app_type=$(get_conf "$app" "type")
         local pattern=$(get_conf "$app" "asset_pattern")
         pattern="${pattern:-$(default_pattern "$app_type")}"
         local current_ver=$(get_conf "$app" "version")
 
-        local result download_url asset_name
-        result=$(echo "$json" | python3 -c "
-import sys, json, fnmatch
-data = json.load(sys.stdin)
-for a in data.get('assets', []):
-    if fnmatch.fnmatch(a['name'], '${pattern:-*}'):
-        print(a['browser_download_url'])
-        print(a['name'])
-        break
-" 2>/dev/null)
-        download_url=$(echo "$result" | head -1)
-        asset_name=$(echo "$result" | tail -1)
+        local download_url asset_name
+        download_url=$(match_asset "$json" "$pattern" url)
+        asset_name=$(match_asset "$json" "$pattern" name)
 
         if [ -z "$download_url" ]; then
             echo "错误: 未匹配到合适的下载文件"
@@ -590,7 +577,14 @@ cmd_set_repo() {
     [ -f "$CONF_DIR/${app}.conf" ] || { echo "错误: $app 未通过 opt-mgr 管理"; exit 1; }
 
     set_conf "$app" "repo" "$repo"
-    set_conf "$app" "asset_pattern" "${pattern:-*}"
+    if [ -n "$pattern" ]; then
+        set_conf "$app" "asset_pattern" "$pattern"
+    else
+        local existing_pat=$(get_conf "$app" "asset_pattern")
+        if [ -z "$existing_pat" ] || [ "$existing_pat" = "*" ]; then
+            set_conf "$app" "asset_pattern" "$(default_pattern "$(get_conf "$app" "type")")"
+        fi
+    fi
 
     local binary=$(get_conf "$app" "binary")
     local ver=$(echo "$binary" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
@@ -599,6 +593,24 @@ cmd_set_repo() {
     echo "已配置 $app GitHub 仓库: $repo"
     echo "  asset 匹配: ${pattern:-*}"
     echo "  当前版本:   ${ver:-未知}"
+}
+
+# ---------- 辅助: JSON 解析 ----------
+gh_tag_name()    { echo "$1" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null; }
+gh_published()   { echo "$1" | python3 -c "import sys,json; print(json.load(sys.stdin).get('published_at','')[:10])" 2>/dev/null; }
+
+match_asset() {
+    # 用法: match_asset <json> <pattern> <mode>
+    # mode=url  → 输出下载链接, mode=name → 输出文件名
+    local json="$1" pattern="$2" mode="${3:-url}"
+    echo "$json" | python3 -c "
+import sys, json, fnmatch
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    if fnmatch.fnmatch(a['name'], '$pattern'):
+        print(a['browser_download_url'] if '$mode' == 'url' else a['name'])
+        break
+" 2>/dev/null
 }
 
 # ---------- GitHub API ----------
@@ -685,9 +697,9 @@ cmd_check() {
             continue
         fi
 
-        local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+        local latest_tag=$(gh_tag_name "$json")
         local latest_ver=$(extract_version "$latest_tag")
-        local published=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('published_at','')[:10])" 2>/dev/null)
+        local published=$(gh_published "$json")
 
         if [ -z "$latest_ver" ]; then
             echo "    ⚠ 无法解析远端版本号 (tag: $latest_tag)"
@@ -696,14 +708,7 @@ cmd_check() {
 
         local asset_name=""
         if [ -n "$pattern" ]; then
-            asset_name=$(echo "$json" | python3 -c "
-import sys, json, fnmatch
-data = json.load(sys.stdin)
-for a in data.get('assets', []):
-    if fnmatch.fnmatch(a['name'], '$pattern'):
-        print(a['name'])
-        break
-" 2>/dev/null)
+            asset_name=$(match_asset "$json" "$pattern" name)
         fi
 
         echo "    远程版本: $latest_ver ($published)"
@@ -788,7 +793,7 @@ do_upgrade_one() {
         return 1
     fi
 
-    local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+    local latest_tag=$(gh_tag_name "$json")
     local latest_ver=$(extract_version "$latest_tag")
     local current_ver=$(get_conf "$app" "version")
     local pattern=$(get_conf "$app" "asset_pattern")
@@ -798,18 +803,9 @@ do_upgrade_one() {
         return 2
     fi
 
-    local result download_url asset_name
-    result=$(echo "$json" | python3 -c "
-import sys, json, fnmatch
-data = json.load(sys.stdin)
-for a in data.get('assets', []):
-    if fnmatch.fnmatch(a['name'], '${pattern:-*}'):
-        print(a['browser_download_url'])
-        print(a['name'])
-        break
-" 2>/dev/null)
-    download_url=$(echo "$result" | head -1)
-    asset_name=$(echo "$result" | tail -1)
+    local download_url asset_name
+    download_url=$(match_asset "$json" "$pattern" url)
+    asset_name=$(match_asset "$json" "$pattern" name)
 
     if [ -z "$download_url" ]; then
         echo "[$idx/$total] $app: 未匹配到下载文件"
@@ -969,9 +965,9 @@ cmd_info() {
         json=$(gh_api_latest "$repo")
         api_rc=$?
         if [ $api_rc -eq 0 ] && [ -n "$json" ]; then
-            local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+            local latest_tag=$(gh_tag_name "$json")
             local latest_ver=$(extract_version "$latest_tag")
-            local published=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('published_at','')[:10])" 2>/dev/null)
+            local published=$(gh_published "$json")
             echo ""
             echo "  远程版本: ${latest_ver:-?}  ($published)"
             if [ -n "$ver" ] && [ "$ver" = "$latest_ver" ]; then
