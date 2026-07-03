@@ -1,42 +1,39 @@
-# bash completion for opt-mgr
-# 安装: source ~/.local/bin/opt-mgr-completion.bash
-
+# bash completion for opt-mgr - 无需额外依赖
 _opt_mgr_completion() {
-    local cur prev words cword
-    _init_completion || return
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     local commands="install update remove rollback skip unskip info list set-repo check upgrade cleanup"
 
-    if [ "$cword" -eq 1 ]; then
+    if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
         return
     fi
 
-    local cmd="${words[1]}"
+    local cmd="${COMP_WORDS[1]}"
     case "$cmd" in
         update|remove|rollback|skip|unskip|info|set-repo)
-            if [ "$cword" -eq 2 ]; then
-                # 列出所有已管理的应用名
+            if [ "$COMP_CWORD" -eq 2 ]; then
                 local apps=()
+                shopt -s nullglob
                 for conf in "$HOME/.config/opt-mgr/"*.conf; do
-                    [ -f "$conf" ] || continue
                     apps+=("$(basename "$conf" .conf)")
                 done
+                shopt -u nullglob
                 COMPREPLY=($(compgen -W "${apps[*]}" -- "$cur"))
             fi
             ;;
         install)
-            if [ "$cword" -eq 2 ]; then
-                COMPREPLY=($(compgen -f -- "$cur"))
-            fi
+            COMPREPLY=($(compgen -f -- "$cur"))
             ;;
         check|upgrade)
-            # 可选的应用名
             local apps=()
+            shopt -s nullglob
             for conf in "$HOME/.config/opt-mgr/"*.conf; do
-                [ -f "$conf" ] || continue
                 apps+=("$(basename "$conf" .conf)")
             done
+            shopt -u nullglob
             COMPREPLY=($(compgen -W "${apps[*]}" -- "$cur"))
             ;;
     esac
