@@ -481,12 +481,13 @@ for a in data.get('assets', []):
             ;;
 
         jar|appimage|file)
+            # 备份旧文件
+            [ -f "${target_dir}/$old_binary" ] && cp "${target_dir}/$old_binary" "$backup_dir/prev" 2>/dev/null
             binary="$name"
-            # 删除旧文件
             if [ -n "$old_binary" ] && [ -f "${target_dir}/$old_binary" ] && [ "$old_binary" != "$binary" ]; then
                 sudo rm -f "${target_dir}/$old_binary"
-                echo "  -> 清理旧文件: $old_binary"
             fi
+            sudo cp "$file" "${target_dir}/$name"
             [ "$ftype" != "jar" ] && sudo chmod +x "${target_dir}/$name"
 
             exec_cmd=$(get_conf "$app" "exec")
@@ -863,7 +864,7 @@ cmd_rollback() {
         tar)
             [ ! -f "$backup_dir/prev.tar.gz" ] && { echo "$app: 备份文件不存在"; exit 1; }
             sudo rm -rf "${target_dir:?}/*"
-            sudo tar -xzf "$backup_dir/prev.tar.gz" -C /
+            sudo tar -xzf "$backup_dir/prev.tar.gz" -C "$(dirname "$target_dir")"
             echo "  目录已还原"
             ;;
         jar|appimage|file)
