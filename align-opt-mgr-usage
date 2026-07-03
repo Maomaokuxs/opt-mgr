@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""对齐 opt-mgr 帮助输出中所有 # 注释列"""
+"""对齐 opt-mgr 帮助输出中所有 # 注释列（全局对齐）"""
 import re, sys, os, unicodedata
 
 FILE = os.path.expanduser("~/.local/bin/opt-mgr")
@@ -9,35 +9,6 @@ def display_width(s):
     for c in s:
         w += 2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1
     return w
-
-def align_group(block):
-    """对齐一个段落内的 # 注释"""
-    # 分离 header（# 注释前没有内容或纯标题行）和数据行
-    max_w = 0
-    for line in block:
-        for sep in ('  #', ' #', '\t#'):
-            if sep in line:
-                body = line[:line.rindex(sep)].rstrip()
-                max_w = max(max_w, display_width(body))
-                break
-    if max_w == 0:
-        return block
-
-    result = []
-    for line in block:
-        matched = False
-        for sep in ('  #', ' #', '\t#'):
-            if sep in line:
-                idx = line.rindex(sep)
-                body = line[:idx].rstrip()
-                comment = line[idx + len(sep) - 1:]
-                pad = max_w - display_width(body) + 4
-                result.append(f"{body}{' ' * pad}{comment}")
-                matched = True
-                break
-        if not matched:
-            result.append(line.rstrip())
-    return result
 
 def align():
     with open(FILE) as f:
@@ -50,28 +21,33 @@ def align():
     raw = m.group(1)
     raw_lines = raw.split('\n')
 
-    # 按空行分组，每个分组独立对齐
-    groups = []
-    buf = []
+    # 全局计算最大宽度
+    max_w = 0
     for line in raw_lines:
-        if line.rstrip() == '':
-            if buf:
-                groups.append(align_group(buf))
-                buf = []
-            groups.append(None)  # 标记空行
-        else:
-            buf.append(line.rstrip())
-    if buf:
-        groups.append(align_group(buf))
+        for sep in ('  #', ' #', '\t#'):
+            if sep in line:
+                body = line[:line.rindex(sep)].rstrip()
+                max_w = max(max_w, display_width(body))
+                break
 
-    # 重建：列表段用 \n 连接，None 变空行
-    result_lines = []
-    for g in groups:
-        if g is None:
-            result_lines.append('')
-        else:
-            result_lines.extend(g)
-    new_body = '\n'.join(result_lines)
+    # 重新生成每行
+    new_lines = []
+    for line in raw_lines:
+        stripped = line.rstrip()
+        matched = False
+        for sep in ('  #', ' #', '\t#'):
+            if sep in stripped:
+                idx = stripped.rindex(sep)
+                body = stripped[:idx].rstrip()
+                comment = stripped[idx + len(sep) - 1:]
+                pad = max_w - display_width(body) + 4
+                new_lines.append(f"{body}{' ' * pad}{comment}")
+                matched = True
+                break
+        if not matched:
+            new_lines.append(stripped)
+
+    new_body = '\n'.join(new_lines)
     content = content.replace(raw, new_body)
     with open(FILE, 'w') as f:
         f.write(content)

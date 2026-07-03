@@ -6,6 +6,7 @@ CONF_DIR="$HOME/.config/opt-mgr"
 
 usage() {
     cat <<'EOF'
+
 用法:
 
   opt-mgr install  <应用名> <文件路径> [选项]    # 首次安装应用
@@ -22,18 +23,18 @@ usage() {
 
 install 选项:
 
-  --icon <路径>          # 指定图标文件
-  --exec <前缀>          # Exec前缀, {} 占位二进制路径
-  --repo <owner/repo>    # GitHub 仓库 (首次配置后自动检查更新)
-  --pattern <模式>       # asset 匹配模式 (可选, 自动按架构识别)
+  --icon <路径>                                  # 指定图标文件
+  --exec <前缀>                                  # Exec前缀, {} 占位二进制路径
+  --repo <owner/repo>                            # GitHub 仓库 (首次配置后自动检查更新)
+  --pattern <模式>                               # asset 匹配模式 (可选, 自动按架构识别)
 
 支持的文件类型:
 
-  .tar.gz / .tgz    # 解压到 /opt/<应用名>/
-  .jar              # java -jar 启动
-  .rpm              # dnf 系统安装
-  .AppImage         # 复制到 /opt/<应用名>/ 直接执行
-  其他二进制文件    # 同上
+  .tar.gz / .tgz                                 # 解压到 /opt/<应用名>/
+  .jar                                           # java -jar 启动
+  .rpm                                           # dnf 系统安装
+  .AppImage                                      # 复制到 /opt/<应用名>/ 直接执行
+  其他二进制文件                                 # 同上
 
 示例:
 
