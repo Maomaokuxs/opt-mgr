@@ -1,6 +1,2 @@
-# 忽略除 opt-mgr 外的所有文件
-/*
-!/opt-mgr
-!/.gitignore
-!/opt-mgr-completion.bash
-!/align-opt-mgr-usage
+*.swp
+*~
