@@ -109,16 +109,11 @@ default_pattern() {
     local ftype="$1"
     local archs=($(detect_arch))
     case "$ftype" in
-        rpm)
-            for a in "${archs[@]}"; do echo "*${a}.rpm"; return; done
-            echo "*.rpm" ;;
-        tar)
-            for a in "${archs[@]}"; do echo "*linux_${a}.tar.gz"; return; done
-            echo "*linux*.tar.gz" ;;
-        appimage)
-            echo "*.AppImage" ;;
-        jar) echo "*.jar" ;;
-        *) echo "*" ;;
+        rpm)    echo "*${archs[0]}.rpm" ;;
+        tar)    echo "*linux_${archs[0]}.tar.gz" ;;
+        appimage) echo "*.AppImage" ;;
+        jar)    echo "*.jar" ;;
+        *)      echo "*" ;;
     esac
 }
 
@@ -192,6 +187,8 @@ cmd_install() {
 
     local ftype=$(detect_file_type "$file")
     local name=$(basename "$file")
+
+    init_conf
 
     echo "===== 安装 $app (类型: $ftype) ====="
     sudo mkdir -p "$target_dir"
@@ -282,6 +279,7 @@ cmd_install() {
             else
                 sudo dnf install -y "$file" 2>/dev/null || sudo rpm -U "$file"
             fi
+            init_conf
             set_conf "$app" "type" "rpm"
             set_conf "$app" "binary" "$binary"
             ;;
@@ -300,7 +298,6 @@ cmd_install() {
             echo "  -> GitHub: $repo  (asset: ${pattern:-*})"
         fi
 
-        init_conf
         echo "===== 安装完成 ====="
         return
     fi
@@ -318,7 +315,6 @@ cmd_install() {
         echo "  -> GitHub: $repo  (asset: ${pattern:-*})"
     fi
 
-    init_conf
     create_desktop "$app" "$exec_cmd" "$icon" "${app^} 应用"
     echo "===== 安装完成 ====="
 }
@@ -463,11 +459,7 @@ for a in data.get('assets', []):
             ;;
     esac
 
-    if [ -z "$icon" ] && [ -n "$saved_icon" ] && [ -f "$saved_icon" ]; then
-        local icon_name=$(basename "$old_icon")
-        sudo cp "$saved_icon" "${target_dir}/$icon_name"
-        icon="${target_dir}/$icon_name"
-    elif [ -z "$icon" ]; then
+    if [ -z "$icon" ]; then
         icon="$old_icon"
     fi
 
@@ -475,8 +467,6 @@ for a in data.get('assets', []):
     [ -n "$icon" ] && set_conf "$app" "icon" "$icon"
 
     create_desktop "$app" "$exec_cmd" "$icon" "${app^} 应用"
-
-    [ -n "$saved_icon" ] && rm -f "$saved_icon"
 }
 
 # ---------- remove ----------
@@ -560,17 +550,18 @@ gh_api_latest() {
         return
     fi
 
+    local tmp_resp=$(mktemp /tmp/opt-mgr-gh-resp.XXXXXX)
     local http_code
     if [ -n "$token" ]; then
-        http_code=$(curl -sL -o /tmp/opt-mgr-gh-resp -w '%{http_code}' \
+        http_code=$(curl -sL -o "$tmp_resp" -w '%{http_code}' \
             -H "Authorization: Bearer $token" \
             "https://api.github.com/repos/${repo}/releases/latest")
     else
-        http_code=$(curl -sL -o /tmp/opt-mgr-gh-resp -w '%{http_code}' \
+        http_code=$(curl -sL -o "$tmp_resp" -w '%{http_code}' \
             "https://api.github.com/repos/${repo}/releases/latest")
     fi
-    local data=$(cat /tmp/opt-mgr-gh-resp 2>/dev/null)
-    rm -f /tmp/opt-mgr-gh-resp
+    local data=$(cat "$tmp_resp" 2>/dev/null)
+    rm -f "$tmp_resp"
 
     if [ "$http_code" = "403" ] && echo "$data" | grep -qi "rate limit"; then
             touch "$HOME/.cache/opt-mgr/rate_limited"
