@@ -108,16 +108,67 @@ default_pattern() {
     local ftype="$1"
     local archs=($(detect_arch))
     case "$ftype" in
-        rpm)
-            for a in "${archs[@]}"; do echo "*${a}.rpm"; return; done
-            echo "*.rpm" ;;
         tar)
-            for a in "${archs[@]}"; do echo "*linux_${a}.tar.gz"; return; done
-            echo "*linux*.tar.gz" ;;
-        appimage)
-            echo "*.AppImage" ;;
-        jar) echo "*.jar" ;;
-        *) echo "*" ;;
+            [ -d "$target_dir" ] && sudo tar -czf "$backup_dir/prev.tar.gz" -C "$(dirname "$target_dir")" "$(basename "$target_dir")" 2>/dev/null
+            local strip_flag=""
+            local unique
+            unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
+            [ "$unique" -eq 1 ] && strip_flag="--strip-components=1"
+            sudo tar -xzf "$file" -C "$target_dir" $strip_flag --no-same-permissions --overwrite
+
+            binary=$(get_conf "$app" "binary")
+            [ ! -f "${target_dir}/$binary" ] && binary=$(find_binary "$target_dir" "$app")
+            sudo chmod +x "${target_dir}/$binary"
+
+            exec_cmd=$(get_conf "$app" "exec")
+            if [ -z "$exec_cmd" ]; then
+                exec_cmd="${target_dir}/$binary"
+            elif echo "$exec_cmd" | grep -q "{}"; then
+                exec_cmd="${exec_cmd/\{\}/"${target_dir}/$binary"}"
+            elif [ -n "$old_binary" ]; then
+                exec_cmd="${exec_cmd//${old_binary}/${binary}}"
+            fi
+
+            set_conf "$app" "binary" "$binary"
+            set_conf "$app" "type" "tar"
+
+            icon=$(find_icon_in_dir "$target_dir")
+            [ -n "$icon" ] && icon="${target_dir}/$icon"
+            ;;
+
+        jar|appimage|file)
+            [ -f "${target_dir}/$old_binary" ] && cp "${target_dir}/$old_binary" "$backup_dir/prev" 2>/dev/null
+            binary="$name"
+            if [ -n "$old_binary" ] && [ -f "${target_dir}/$old_binary" ] && [ "$old_binary" != "$binary" ]; then
+                sudo rm -f "${target_dir}/$old_binary"
+            fi
+            sudo cp "$file" "${target_dir}/$name"
+            [ "$ftype" != "jar" ] && sudo chmod +x "${target_dir}/$name"
+
+            exec_cmd=$(get_conf "$app" "exec")
+            if [ -n "$exec_cmd" ] && echo "$exec_cmd" | grep -q "{}"; then
+                exec_cmd="${exec_cmd/\{\}/"${target_dir}/$name"}"
+            elif [ -n "$old_binary" ] && [ -n "$exec_cmd" ]; then
+                exec_cmd="${exec_cmd//${old_binary}/${name}}"
+            else
+                [ "$ftype" = "jar" ] && exec_cmd="java -jar ${target_dir}/$name" || exec_cmd="${target_dir}/$name"
+            fi
+
+            set_conf "$app" "binary" "$binary"
+            set_conf "$app" "type" "$ftype"
+            ;;
+
+        rpm)
+            binary="$name"
+            if command -v dnf5 &>/dev/null || dnf --version 2>/dev/null | grep -q "dnf5"; then
+                sudo dnf install -y "$file"
+            else
+                sudo dnf install -y "$file" 2>/dev/null || sudo rpm -U "$file"
+            fi
+            set_conf "$app" "binary" "$binary"
+            set_conf "$app" "type" "rpm"
+            return
+            ;;
     esac
 }
 
@@ -199,6 +250,7 @@ cmd_install() {
 
     case "$ftype" in
         tar)
+            [ -d "$target_dir" ] && sudo tar -czf "$backup_dir/prev.tar.gz" -C "$(dirname "$target_dir")" "$(basename "$target_dir")" 2>/dev/null
             local strip_flag=""
             local unique
             unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
@@ -390,15 +442,17 @@ for a in data.get('assets', []):
     local name=$(basename "$file")
     local ftype=$(detect_file_type "$file")
 
-    local binary="" exec_cmd="" icon=""
-    local saved_icon=""
-    if [ -n "$old_icon" ] && [ -f "$old_icon" ]; then
-        saved_icon=$(mktemp)
-        cp "$old_icon" "$saved_icon"
-    fi
+    local backup_dir="$HOME/.cache/opt-mgr/backups/$app"
+    local current_ver=$(get_conf "$app" "version")
+    mkdir -p "$backup_dir"
+    echo "$current_ver" > "$backup_dir/prev_version"
+    get_conf "$app" "exec" > "$backup_dir/prev_exec"
+    get_conf "$app" "binary" > "$backup_dir/prev_binary"
+    get_conf "$app" "icon" > "$backup_dir/prev_icon"
 
     case "$ftype" in
         tar)
+            [ -d "$target_dir" ] && sudo tar -czf "$backup_dir/prev.tar.gz" -C "$(dirname "$target_dir")" "$(basename "$target_dir")" 2>/dev/null
             local strip_flag=""
             local unique
             unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
@@ -789,6 +843,55 @@ EOF
     fi
 }
 
+# ---------- rollback ----------
+cmd_rollback() {
+    local app=$(resolve_app "${1:-}")
+    [ -z "$app" ] && { echo "用法: opt-mgr rollback <应用名>"; exit 1; }
+
+    local backup_dir="$HOME/.cache/opt-mgr/backups/$app"
+    [ ! -d "$backup_dir" ] && { echo "$app: 没有可回退的版本"; exit 1; }
+
+    local prev_ver=$(cat "$backup_dir/prev_version" 2>/dev/null || echo "?")
+    local current_ver=$(get_conf "$app" "version")
+    echo "$app: $current_ver → $prev_ver"
+
+    local app_type=$(get_conf "$app" "type")
+    local target_dir=$(opt_dir "$app")
+
+    case "$app_type" in
+        tar)
+            [ ! -f "$backup_dir/prev.tar.gz" ] && { echo "$app: 备份文件不存在"; exit 1; }
+            sudo rm -rf "${target_dir:?}/*"
+            sudo tar -xzf "$backup_dir/prev.tar.gz" -C /
+            echo "  目录已还原"
+            ;;
+        jar|appimage|file)
+            [ ! -f "$backup_dir/prev" ] && { echo "$app: 备份文件不存在"; exit 1; }
+            prev_binary=$(cat "$backup_dir/prev_binary" 2>/dev/null || echo "")
+            sudo cp "$backup_dir/prev" "${target_dir}/${prev_binary:-$app}"
+            echo "  文件已还原"
+            ;;
+        rpm)
+            local pkg=$(rpm -qf "$(get_conf "$app" "binary" 2>/dev/null || echo "")" 2>/dev/null)
+            if [ -z "$pkg" ]; then
+                pkg=$(get_conf "$app" "binary")
+                pkg="${pkg%%-*}"
+            fi
+            sudo dnf downgrade -y "$pkg"
+            ;;
+    esac
+
+    # 恢复配置
+    prev_exec=$(cat "$backup_dir/prev_exec" 2>/dev/null)
+    prev_icon=$(cat "$backup_dir/prev_icon" 2>/dev/null)
+    [ -n "$prev_exec" ] && set_conf "$app" "exec" "$prev_exec"
+    [ -n "$prev_icon" ] && set_conf "$app" "icon" "$prev_icon"
+    set_conf "$app" "version" "$prev_ver"
+
+    create_desktop "$app" "$prev_exec" "$prev_icon" "${app^} 应用"
+    echo "$app: 已回退到 $prev_ver"
+}
+
 # ---------- 入口 ----------
 [ $# -ge 1 ] || usage
 
@@ -796,6 +899,7 @@ case "$1" in
     install)  shift; cmd_install "$@" ;;
     update)   shift; cmd_update   "$@" ;;
     remove)   cmd_remove   "${2:-}" ;;
+    rollback) cmd_rollback "${2:-}" ;;
     list)     cmd_list ;;
     set-repo) cmd_set_repo "${2:-}" "$3" "$4" ;;
     check)    cmd_check    "${2:-}" ;;
