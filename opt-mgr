@@ -1,0 +1,800 @@
+#!/bin/bash
+set -e
+
+SCRIPT_NAME="opt-mgr"
+CONF_DIR="$HOME/.config/opt-mgr"
+
+usage() {
+    cat <<'EOF'
+用法:
+  opt-mgr install  <应用名> <文件路径> [选项]
+  opt-mgr update   <应用名> <文件路径>
+  opt-mgr remove   <应用名>
+  opt-mgr list
+  opt-mgr check    [应用名]
+  opt-mgr upgrade  [应用名]
+
+install 选项:
+  --icon <路径>     指定图标文件
+  --exec <前缀>     Exec前缀, {} 占位二进制路径
+  --repo <owner/repo>  GitHub 仓库地址 (一劳永逸配置)
+  --pattern <模式>  asset 匹配模式 (可选, 自动按架构识别)
+
+支持的文件类型:
+  .tar.gz / .tgz   解压到 /opt/<应用名>/
+  .jar             复制到 /opt/<应用名>/，Exec 自动设为 java -jar
+  .rpm             dnf 安装
+  .AppImage        复制到 /opt/<应用名>/，Exec 自动设为 /opt/<应用名>/<文件>
+  其他二进制文件     同上
+
+示例:
+  # 按架构自动匹配, 无需指定 --pattern
+  opt-mgr install kazumi ~/Downloads/Kazumi_2.1.8_amd64.tar.gz \
+    --repo Predidit/Kazumi
+  opt-mgr install hmcl ~/Downloads/HMCL-3.15.1.jar \
+    --repo HMCL-dev/HMCL --icon ~/Downloads/hmcl.png \
+    --exec 'java -Dglass.gtk.uiScale=1.5 -jar {}'
+  opt-mgr install splayer ~/Downloads/splayer-3.1.1-x86_64.rpm \
+    --repo SPlayer-Dev/SPlayer
+
+  opt-mgr check              # 检查更新
+  opt-mgr upgrade            # 一键升级全部
+EOF
+    exit 1
+}
+
+init_conf() { mkdir -p "$CONF_DIR"; }
+
+resolve_app() {
+    local name="$1"
+    for conf in "$CONF_DIR"/*.conf; do
+        [ -f "$conf" ] || continue
+        local app=$(basename "$conf" .conf)
+        if [ "${app,,}" = "${name,,}" ]; then
+            echo "$app"
+            return 0
+        fi
+    done
+    echo "$name"
+    return 1
+}
+
+opt_dir() {
+    local d=$(get_conf "$1" "opt_dir")
+    echo "${d:-/opt/$1}"
+}
+
+get_conf() {
+    local file="$CONF_DIR/${1}.conf" key="$2"
+    [ -f "$file" ] && grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2- || echo ""
+}
+
+set_conf() {
+    local app="$1" key="$2" value="$3"
+    local file="$CONF_DIR/${app}.conf"
+    touch "$file"
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+    else
+        echo "${key}=${value}" >> "$file"
+    fi
+}
+
+find_binary() {
+    local dir="$1" hint="$2"
+    if [ -n "$hint" ] && [ -f "$dir/$hint" ] && [ -x "$dir/$hint" ]; then echo "$hint"; return; fi
+    local found
+    found=$(find "$dir" -maxdepth 2 -type f -executable -not -path "*/data/*" -not -path "*/lib/*" \
+        | grep -v '\.so' | head -1)
+    [ -n "$found" ] && basename "$found" && return
+    echo "$hint"
+}
+
+find_icon_in_dir() {
+    find "$1" -maxdepth 2 \( -name "*.png" -o -name "*.svg" -o -name "*.xpm" \) \
+        -not -path "*/data/*" -not -path "*/lib/*" 2>/dev/null | head -1
+}
+
+detect_arch() {
+    local a=$(uname -m)
+    case "$a" in
+        x86_64) echo "x86_64 amd64" ;;
+        aarch64) echo "aarch64 arm64" ;;
+        *) echo "$a" ;;
+    esac
+}
+
+default_pattern() {
+    local ftype="$1"
+    local archs=($(detect_arch))
+    case "$ftype" in
+        rpm)
+            for a in "${archs[@]}"; do echo "*${a}.rpm"; return; done
+            echo "*.rpm" ;;
+        tar)
+            for a in "${archs[@]}"; do echo "*linux_${a}.tar.gz"; return; done
+            echo "*linux*.tar.gz" ;;
+        appimage)
+            echo "*.AppImage" ;;
+        jar) echo "*.jar" ;;
+        *) echo "*" ;;
+    esac
+}
+
+detect_file_type() {
+    case "$1" in
+        *.tar.gz|*.tgz) echo "tar" ;;
+        *.jar)           echo "jar" ;;
+        *.rpm)           echo "rpm" ;;
+        *.AppImage)      echo "appimage" ;;
+        *)               echo "file" ;;
+    esac
+}
+
+create_desktop() {
+    local app="$1" exec_cmd="$2" icon="$3" comment="$4"
+    local desktop_file="$HOME/.local/share/applications/${app}.desktop"
+    mkdir -p "$HOME/.local/share/applications"
+    local icon_line=""
+    [ -n "$icon" ] && icon_line="Icon=${icon}"
+    cat > "$desktop_file" <<DESKTOP
+[Desktop Entry]
+Name=${app^}
+Comment=${comment}
+Exec=${exec_cmd}
+${icon_line}
+Terminal=false
+Type=Application
+Categories=Utility;
+StartupWMClass=${app^}
+DESKTOP
+    echo "  桌面快捷方式已创建: $desktop_file"
+}
+
+# ---------- install ----------
+cmd_install() {
+    local app="$1" file="$2"
+    [ $# -ge 2 ] || usage
+
+    shift 2
+    local icon_opt="" exec_prefix="" repo="" pattern=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --icon)    icon_opt="$2"; shift ;;
+            --exec)    exec_prefix="$2"; shift ;;
+            --repo)    repo="$2"; shift ;;
+            --pattern) pattern="$2"; shift ;;
+            *) echo "未知选项: $1"; exit 1 ;;
+        esac
+        shift
+    done
+
+    local target_dir="/opt/$app"
+    if [ -d "$target_dir" ]; then
+        echo "应用 $app 已存在于 $target_dir, 请使用 update 命令"
+        exit 1
+    fi
+
+    local ftype=$(detect_file_type "$file")
+    local name=$(basename "$file")
+
+    echo "===== 安装 $app (类型: $ftype) ====="
+    sudo mkdir -p "$target_dir"
+
+    local binary="" exec_cmd="" icon=""
+
+    case "$ftype" in
+        tar)
+            local strip_flag=""
+            local unique
+            unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
+            [ "$unique" -eq 1 ] && strip_flag="--strip-components=1"
+            sudo tar -xzf "$file" -C "$target_dir" $strip_flag --no-same-permissions
+            echo "  -> 已解压到 $target_dir"
+
+            binary=$(find_binary "$target_dir" "$app")
+            sudo chmod +x "$target_dir/$binary"
+            echo "  -> 可执行文件: $binary"
+
+            if [ -n "$exec_prefix" ]; then
+                exec_cmd="${exec_prefix/\{\}/\"${target_dir}/$binary\"}"
+            else
+                exec_cmd="${target_dir}/$binary"
+            fi
+
+            set_conf "$app" "type" "tar"
+            set_conf "$app" "binary" "$binary"
+
+            if [ -n "$icon_opt" ] && [ -f "$icon_opt" ]; then
+                local ext="${icon_opt##*.}"
+                sudo cp "$icon_opt" "${target_dir}/icon.${ext}"
+                icon="${target_dir}/icon.${ext}"
+            else
+                icon=$(find_icon_in_dir "$target_dir")
+                [ -n "$icon" ] && icon="${target_dir}/$icon"
+            fi
+            ;;
+
+        jar)
+            binary="$name"
+            sudo cp "$file" "${target_dir}/$name"
+            echo "  -> 已复制: $name"
+
+            if [ -n "$exec_prefix" ]; then
+                exec_cmd="${exec_prefix/\{\}/\"${target_dir}/$name\"}"
+            else
+                exec_cmd="java -jar ${target_dir}/$name"
+            fi
+            echo "  -> Exec: $exec_cmd"
+
+            set_conf "$app" "type" "jar"
+            set_conf "$app" "binary" "$binary"
+
+            if [ -n "$icon_opt" ] && [ -f "$icon_opt" ]; then
+                local ext="${icon_opt##*.}"
+                sudo cp "$icon_opt" "${target_dir}/icon.${ext}"
+                icon="${target_dir}/icon.${ext}"
+            fi
+            ;;
+
+        appimage|file)
+            binary="$name"
+            sudo cp "$file" "${target_dir}/$name"
+            sudo chmod +x "${target_dir}/$name"
+            echo "  -> 已复制: $name"
+
+            if [ -n "$exec_prefix" ]; then
+                exec_cmd="${exec_prefix/\{\}/\"${target_dir}/$name\"}"
+            else
+                exec_cmd="${target_dir}/$name"
+            fi
+
+            set_conf "$app" "type" "$ftype"
+            set_conf "$app" "binary" "$binary"
+
+            if [ -n "$icon_opt" ] && [ -f "$icon_opt" ]; then
+                local ext="${icon_opt##*.}"
+                sudo cp "$icon_opt" "${target_dir}/icon.${ext}"
+                icon="${target_dir}/icon.${ext}"
+            fi
+            ;;
+
+        rpm)
+            binary="$name"
+            echo "  -> 安装 RPM: $name"
+            if command -v dnf5 &>/dev/null || dnf --version 2>/dev/null | grep -q "dnf5"; then
+                sudo dnf install -y "$file"
+            else
+                sudo dnf install -y "$file" 2>/dev/null || sudo rpm -U "$file"
+            fi
+            set_conf "$app" "type" "rpm"
+            set_conf "$app" "binary" "$binary"
+            ;;
+
+    esac
+
+    if [ "$ftype" = "rpm" ]; then
+        set_conf "$app" "opt_dir" ""
+
+        if [ -n "$repo" ]; then
+            set_conf "$app" "repo" "$repo"
+            local pat="${pattern:-$(default_pattern "$ftype")}"
+            set_conf "$app" "asset_pattern" "$pat"
+            local ver=$(echo "$binary" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
+            [ -n "$ver" ] && set_conf "$app" "version" "$ver"
+            echo "  -> GitHub: $repo  (asset: ${pattern:-*})"
+        fi
+
+        init_conf
+        echo "===== 安装完成 ====="
+        return
+    fi
+
+    [ -n "$exec_cmd" ] && set_conf "$app" "exec" "$exec_cmd"
+    [ -n "$icon" ] && set_conf "$app" "icon" "$icon"
+    set_conf "$app" "opt_dir" "$target_dir"
+
+    if [ -n "$repo" ]; then
+        set_conf "$app" "repo" "$repo"
+        local pat="${pattern:-$(default_pattern "$ftype")}"
+        set_conf "$app" "asset_pattern" "$pat"
+        local ver=$(echo "$file" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
+        [ -n "$ver" ] && set_conf "$app" "version" "$ver"
+        echo "  -> GitHub: $repo  (asset: ${pattern:-*})"
+    fi
+
+    init_conf
+    create_desktop "$app" "$exec_cmd" "$icon" "${app^} 应用"
+    echo "===== 安装完成 ====="
+}
+
+# ---------- update ----------
+cmd_update() {
+    local app_input="$1" file="${2:-}"
+
+    local app=$(resolve_app "$app_input")
+    local target_dir=$(opt_dir "$app")
+
+    # 无文件参数 → 自动从 GitHub 下载最新版
+    if [ -z "$file" ]; then
+        local repo=$(get_conf "$app" "repo")
+        [ -z "$repo" ] && { echo "错误: $app 未配置 GitHub 仓库, 请提供文件路径或先执行 set-repo"; exit 1; }
+
+        echo "===== 自动更新 $app ====="
+        local json
+        json=$(gh_api_latest "$repo")
+        local api_rc=$?
+        if [ $api_rc -ne 0 ]; then
+            [ $api_rc -ne 2 ] && echo "错误: 请求 GitHub API 失败"
+            exit 1
+        fi
+
+        local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+        local app_type=$(get_conf "$app" "type")
+        local pattern=$(get_conf "$app" "asset_pattern")
+        pattern="${pattern:-$(default_pattern "$app_type")}"
+        local current_ver=$(get_conf "$app" "version")
+
+        local result download_url asset_name
+        result=$(echo "$json" | python3 -c "
+import sys, json, fnmatch
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    if fnmatch.fnmatch(a['name'], '${pattern:-*}'):
+        print(a['browser_download_url'])
+        print(a['name'])
+        break
+" 2>/dev/null)
+        download_url=$(echo "$result" | head -1)
+        asset_name=$(echo "$result" | tail -1)
+
+        if [ -z "$download_url" ]; then
+            echo "错误: 未匹配到合适的下载文件"
+            exit 1
+        fi
+
+        local latest_ver=$(extract_version "$latest_tag")
+        [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ] && { echo "已是最新版本 ($current_ver)"; exit 0; }
+
+        echo "下载: $asset_name  ($latest_ver)"
+        local tmp_dir="$HOME/.cache/opt-mgr/downloads"
+        mkdir -p "$tmp_dir"
+        file="$tmp_dir/$asset_name"
+        download_file "$download_url" "$file" || { echo "错误: 下载失败"; rm -f "$file"; exit 1; }
+        echo ""
+    fi
+
+    [ -f "$file" ] || { echo "错误: 找不到文件 $file"; exit 1; }
+    [ -d "$target_dir" ] || { echo "错误: $target_dir 不存在，请先使用 install"; exit 1; }
+
+    local app_type=$(get_conf "$app" "type")
+    local old_binary=$(get_conf "$app" "binary")
+    local old_exec=$(get_conf "$app" "exec")
+    local old_icon=$(get_conf "$app" "icon")
+    local name=$(basename "$file")
+    local ftype=$(detect_file_type "$file")
+
+    echo "===== 更新 $app ====="
+
+    local saved_icon=""
+    if [ -n "$old_icon" ] && [ -f "$old_icon" ]; then
+        saved_icon=$(mktemp)
+        cp "$old_icon" "$saved_icon"
+    fi
+
+    local binary="" exec_cmd="" icon=""
+
+    case "$ftype" in
+        tar)
+            local strip_flag=""
+            local unique
+            unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
+            [ "$unique" -eq 1 ] && strip_flag="--strip-components=1"
+            sudo tar -xzf "$file" -C "$target_dir" $strip_flag --no-same-permissions --overwrite
+            echo "  -> 已解压到 $target_dir"
+
+            binary=$(get_conf "$app" "binary")
+            [ ! -f "${target_dir}/$binary" ] && binary=$(find_binary "$target_dir" "$app")
+            sudo chmod +x "${target_dir}/$binary"
+            echo "  -> 可执行文件: $binary"
+
+            exec_cmd=$(get_conf "$app" "exec")
+            if [ -z "$exec_cmd" ]; then
+                exec_cmd="${target_dir}/$binary"
+            elif echo "$exec_cmd" | grep -q "{}"; then
+                exec_cmd="${exec_cmd/\{\}/\"${target_dir}/$binary\"}"
+            elif [ -n "$old_binary" ]; then
+                exec_cmd="${exec_cmd//${old_binary}/${binary}}"
+            fi
+
+            set_conf "$app" "binary" "$binary"
+            set_conf "$app" "type" "tar"
+
+            icon=$(find_icon_in_dir "$target_dir")
+            [ -n "$icon" ] && icon="${target_dir}/$icon"
+            ;;
+
+        jar|appimage|file)
+            binary="$name"
+            # 删除旧文件
+            if [ -n "$old_binary" ] && [ -f "${target_dir}/$old_binary" ] && [ "$old_binary" != "$binary" ]; then
+                sudo rm -f "${target_dir}/$old_binary"
+                echo "  -> 清理旧文件: $old_binary"
+            fi
+            [ "$ftype" != "jar" ] && sudo chmod +x "${target_dir}/$name"
+            echo "  -> 已更新: $name"
+
+            exec_cmd=$(get_conf "$app" "exec")
+            if [ -n "$exec_cmd" ] && echo "$exec_cmd" | grep -q "{}"; then
+                exec_cmd="${exec_cmd/\{\}/\"${target_dir}/$name\"}"
+            elif [ -n "$old_binary" ] && [ -n "$exec_cmd" ]; then
+                exec_cmd="${exec_cmd//${old_binary}/${name}}"
+            else
+                [ "$ftype" = "jar" ] && exec_cmd="java -jar ${target_dir}/$name" || exec_cmd="${target_dir}/$name"
+            fi
+
+            set_conf "$app" "binary" "$binary"
+            set_conf "$app" "type" "$ftype"
+            ;;
+
+        rpm)
+            binary="$name"
+            echo "  -> 安装 RPM: $name"
+            if command -v dnf5 &>/dev/null || dnf --version 2>/dev/null | grep -q "dnf5"; then
+                sudo dnf install -y "$file"
+            else
+                sudo dnf install -y "$file" 2>/dev/null || sudo rpm -U "$file"
+            fi
+            set_conf "$app" "binary" "$binary"
+            set_conf "$app" "type" "rpm"
+            echo "===== 更新完成 ====="
+            return
+            ;;
+    esac
+
+    if [ -z "$icon" ] && [ -n "$saved_icon" ] && [ -f "$saved_icon" ]; then
+        local icon_name=$(basename "$old_icon")
+        sudo cp "$saved_icon" "${target_dir}/$icon_name"
+        icon="${target_dir}/$icon_name"
+        echo "  -> 已恢复旧图标"
+    elif [ -z "$icon" ]; then
+        icon="$old_icon"
+    fi
+
+    [ -n "$exec_cmd" ] && set_conf "$app" "exec" "$exec_cmd"
+    [ -n "$icon" ] && set_conf "$app" "icon" "$icon"
+
+    create_desktop "$app" "$exec_cmd" "$icon" "${app^} 应用"
+
+    [ -n "$saved_icon" ] && rm -f "$saved_icon"
+    echo "===== 更新完成 ====="
+}
+
+# ---------- remove ----------
+cmd_remove() {
+    local app=$(resolve_app "$1")
+    [ $# -eq 1 ] || usage
+    local target_dir=$(opt_dir "$app")
+    local app_type=$(get_conf "$app" "type")
+
+    echo "===== 卸载 $app ====="
+    if [ "$app_type" = "rpm" ]; then
+        local pkg=$(rpm -qf "$(get_conf "$app" "binary" 2>/dev/null || echo "")" 2>/dev/null)
+        [ -n "$pkg" ] && sudo dnf remove -y "$pkg" 2>/dev/null
+        rm -f "$HOME/.local/share/applications/${app}.desktop"
+        rm -f "$CONF_DIR/${app}.conf"
+    else
+        [ -d "$target_dir" ] || { echo "错误: $target_dir 不存在"; exit 1; }
+        sudo rm -rf "$target_dir"
+        rm -f "$HOME/.local/share/applications/${app}.desktop"
+        rm -f "$CONF_DIR/${app}.conf"
+    fi
+    echo "===== 卸载完成 ====="
+}
+
+# ---------- list ----------
+cmd_list() {
+    echo "已管理的应用:"
+    local found=0
+    for conf in "$CONF_DIR"/*.conf; do
+        [ -f "$conf" ] || continue
+        local app=$(basename "$conf" .conf)
+        local app_type=$(get_conf "$app" "type")
+        local binary=$(get_conf "$app" "binary")
+        local exec_cmd=$(get_conf "$app" "exec")
+        local icon=$(get_conf "$app" "icon")
+        local target_dir=$(opt_dir "$app")
+        local ver=$(get_conf "$app" "version")
+        local repo=$(get_conf "$app" "repo")
+        echo "  $app"
+        echo "    路径:    $target_dir"
+        echo "    类型:    ${app_type:-未知}  |  版本: ${ver:-未知}"
+        echo "    文件:    $binary"
+        echo "    Exec:    ${exec_cmd:-}"
+        echo "    图标:    ${icon:-无}"
+        [ -n "$repo" ] && echo "    GitHub:  $repo"
+        found=1
+    done
+    [ $found -eq 0 ] && echo "  (无)"
+}
+
+# ---------- set-repo ----------
+cmd_set_repo() {
+    local app=$(resolve_app "$1"); shift
+    local repo="${1:-}" pattern="${2:-}"
+    [ -n "$repo" ] || { echo "用法: opt-mgr set-repo <应用名> <owner/repo> [asset匹配模式]"; exit 1; }
+    [ -f "$CONF_DIR/${app}.conf" ] || { echo "错误: $app 未通过 opt-mgr 管理"; exit 1; }
+
+    set_conf "$app" "repo" "$repo"
+    set_conf "$app" "asset_pattern" "${pattern:-*}"
+
+    local binary=$(get_conf "$app" "binary")
+    local ver=$(echo "$binary" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
+    [ -n "$ver" ] && set_conf "$app" "version" "$ver"
+
+    echo "已配置 $app GitHub 仓库: $repo"
+    echo "  asset 匹配: ${pattern:-*}"
+    echo "  当前版本:   ${ver:-未知}"
+}
+
+# ---------- GitHub API ----------
+gh_api_latest() {
+    local repo="$1"
+    local token="${GITHUB_TOKEN:-}"
+    [ -z "$token" ] && [ -f "$HOME/.config/opt-mgr/github_token" ] && token=$(cat "$HOME/.config/opt-mgr/github_token")
+
+    local cache_file="$HOME/.cache/opt-mgr/api_cache_$(echo "$repo" | tr '/' '_')"
+    mkdir -p "$HOME/.cache/opt-mgr"
+
+    if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file"))) -lt 300 ]; then
+        cat "$cache_file"
+        return
+    fi
+
+    local http_code
+    if [ -n "$token" ]; then
+        http_code=$(curl -sL -o /tmp/opt-mgr-gh-resp -w '%{http_code}' \
+            -H "Authorization: Bearer $token" \
+            "https://api.github.com/repos/${repo}/releases/latest")
+    else
+        http_code=$(curl -sL -o /tmp/opt-mgr-gh-resp -w '%{http_code}' \
+            "https://api.github.com/repos/${repo}/releases/latest")
+    fi
+    local data=$(cat /tmp/opt-mgr-gh-resp 2>/dev/null)
+    rm -f /tmp/opt-mgr-gh-resp
+
+    if [ "$http_code" = "403" ] && echo "$data" | grep -qi "rate limit"; then
+            touch "$HOME/.cache/opt-mgr/rate_limited"
+            return 2
+    fi
+
+    if [ -n "$data" ] && [ "$http_code" = "200" ]; then
+        echo "$data" | tee "$cache_file"
+    else
+        return 1
+    fi
+}
+
+download_file() {
+    local url="$1" dest="$2"
+    if command -v wget &>/dev/null; then
+        wget -q --show-progress -O "$dest" "$url"
+    elif command -v aria2c &>/dev/null; then
+        aria2c -q --console-log-level=error --show-console-readout=true -o "$dest" "$url"
+    else
+        curl -fSL --progress-bar -o "$dest" "$url"
+    fi
+}
+
+extract_version() {
+    echo "$1" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1
+}
+
+# ---------- check ----------
+cmd_check() {
+    local target="${1:-}"
+    [ -z "$target" ] && echo "===== 检查所有应用更新 ====="
+    local checked=0 updated=0
+
+    for conf in "$CONF_DIR"/*.conf; do
+        [ -f "$conf" ] || continue
+        local app=$(basename "$conf" .conf)
+        [ -n "$target" ] && [ "${app,,}" != "${target,,}" ] && continue
+
+        local repo=$(get_conf "$app" "repo")
+        [ -z "$repo" ] && continue
+
+        local current_ver=$(get_conf "$app" "version")
+        local app_type=$(get_conf "$app" "type")
+        local pattern=$(get_conf "$app" "asset_pattern")
+        pattern="${pattern:-$(default_pattern "$app_type")}"
+
+        echo ""
+        echo "  [$app] 仓库: $repo"
+
+        local json
+        json=$(gh_api_latest "$repo")
+        local api_rc=$?
+        if [ $api_rc -ne 0 ]; then
+            [ $api_rc -ne 2 ] && echo "    ⚠ 请求失败"
+            continue
+        fi
+
+        local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+        local latest_ver=$(extract_version "$latest_tag")
+        local published=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('published_at','')[:10])" 2>/dev/null)
+
+        if [ -z "$latest_ver" ]; then
+            echo "    ⚠ 无法解析远端版本号 (tag: $latest_tag)"
+            continue
+        fi
+
+        local asset_name=""
+        if [ -n "$pattern" ]; then
+            asset_name=$(echo "$json" | python3 -c "
+import sys, json, fnmatch
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    if fnmatch.fnmatch(a['name'], '$pattern'):
+        print(a['name'])
+        break
+" 2>/dev/null)
+        fi
+
+        echo "    远程版本: $latest_ver ($published)"
+        echo "    本地版本: ${current_ver:-未知}"
+        [ -n "$asset_name" ] && echo "    匹配资产: $asset_name"
+
+        if [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ]; then
+            echo "    ✓ 已是最新"
+        elif [ -n "$current_ver" ]; then
+            echo "    ✦ 有新版本可用!"
+            updated=$((updated + 1))
+        else
+            echo "    ✦ 有新版本可用 (本地版本未记录)"
+            updated=$((updated + 1))
+        fi
+        checked=$((checked + 1))
+    done
+
+    echo ""
+    echo "检查完成: $checked 个应用, $updated 个有新版本"
+    check_rate_limit
+}
+# ---------- upgrade ----------
+cmd_upgrade() {
+    local target="${1:-}"
+
+    if [ -z "$target" ]; then
+        local apps=()
+        for conf in "$CONF_DIR"/*.conf; do
+            [ -f "$conf" ] || continue
+            local app=$(basename "$conf" .conf)
+            local repo=$(get_conf "$app" "repo")
+            [ -n "$repo" ] && apps+=("$app")
+        done
+
+        local total=${#apps[@]}
+        [ "$total" -eq 0 ] && { echo "无配置 GitHub 仓库的应用。"; return; }
+
+        echo "升级第三方应用:"
+        local upgraded=0 failed=0 skipped=0 idx=0
+        declare -a updated_apps
+        for app in "${apps[@]}"; do
+            idx=$((idx + 1))
+            local result
+            result=$(do_upgrade_one "$app" "$idx" "$total")
+            case $? in
+                0) upgraded=$((upgraded + 1)) ;;
+                2) skipped=$((skipped + 1)) ;;
+                *) failed=$((failed + 1)) ;;
+            esac
+        done
+        [ $upgraded -eq 0 ] && [ $failed -eq 0 ] && echo "  无须任何处理。"
+        [ $failed -gt 0 ] && echo "完成: $upgraded 成功, $failed 失败"
+        check_rate_limit
+        return
+    fi
+
+    local app=$(resolve_app "$target")
+    echo "升级第三方应用:"
+    local rc
+    do_upgrade_one "$app" 1 1
+    rc=$?
+    [ $rc -eq 2 ] && echo "  $app: 无须任何处理。"
+}
+
+do_upgrade_one() {
+    local app="$1" idx="${2:-1}" total="${3:-1}"
+    local repo=$(get_conf "$app" "repo")
+    [ -z "$repo" ] && return 1
+
+    local target_dir=$(opt_dir "$app")
+    local app_type=$(get_conf "$app" "type")
+    if [ "$app_type" != "rpm" ] && [ ! -d "$target_dir" ]; then
+        echo "  [$idx/$total] $app: 目录不存在, 跳过"
+        return 1
+    fi
+
+    local json
+    json=$(gh_api_latest "$repo")
+    local api_rc=$?
+    if [ $api_rc -ne 0 ]; then
+        [ $api_rc -ne 2 ] && echo "  [$idx/$total] $app: API 请求失败"
+        return 1
+    fi
+
+    local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+    local latest_ver=$(extract_version "$latest_tag")
+    local current_ver=$(get_conf "$app" "version")
+    local pattern=$(get_conf "$app" "asset_pattern")
+    pattern="${pattern:-$(default_pattern "$app_type")}"
+
+    if [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ]; then
+        return 2
+    fi
+
+    local result download_url asset_name
+    result=$(echo "$json" | python3 -c "
+import sys, json, fnmatch
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    if fnmatch.fnmatch(a['name'], '${pattern:-*}'):
+        print(a['browser_download_url'])
+        print(a['name'])
+        break
+" 2>/dev/null)
+    download_url=$(echo "$result" | head -1)
+    asset_name=$(echo "$result" | tail -1)
+
+    if [ -z "$download_url" ]; then
+        echo "  [$idx/$total] $app: 未匹配到下载文件"
+        return 1
+    fi
+
+    local ver_info=""
+    [ -n "$current_ver" ] && ver_info="  $current_ver → $latest_ver"
+    echo "  [$idx/$total] $app:$ver_info"
+
+    local tmp_dir="$HOME/.cache/opt-mgr/downloads"
+    mkdir -p "$tmp_dir"
+    local local_file="$tmp_dir/$asset_name"
+    download_file "$download_url" "$local_file" || {
+        echo "  [$idx/$total] $app: 下载失败"; rm -f "$local_file"; return 1
+    }
+
+    if cmd_update "$app" "$local_file"; then
+        set_conf "$app" "version" "$latest_ver"
+        return 0
+    else
+        echo "  [$idx/$total] $app: 安装失败"
+        return 1
+    fi
+}
+
+check_rate_limit() {
+    if [ -f "$HOME/.cache/opt-mgr/rate_limited" ]; then
+        rm -f "$HOME/.cache/opt-mgr/rate_limited"
+        cat >&2 <<EOF
+
+⚠  GitHub API 限流 (60次/小时), 请配置 Token:
+  1. 访问 https://github.com/settings/tokens?type=beta 创建 Token
+  2. 权限无需勾选, 直接 Generate
+  3. echo "你的Token" > ~/.config/opt-mgr/github_token
+EOF
+    fi
+}
+
+# ---------- 入口 ----------
+[ $# -ge 1 ] || usage
+
+case "$1" in
+    install)  shift; cmd_install "$@" ;;
+    update)   shift; cmd_update   "$@" ;;
+    remove)   cmd_remove   "${2:-}" ;;
+    list)     cmd_list ;;
+    set-repo) cmd_set_repo "${2:-}" "$3" "$4" ;;
+    check)    cmd_check    "${2:-}" ;;
+    upgrade)  cmd_upgrade  "${2:-}" ;;
+    *)        usage ;;
+esac
