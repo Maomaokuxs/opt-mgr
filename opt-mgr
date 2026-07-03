@@ -17,7 +17,7 @@ usage() {
   opt-mgr skip     <应用名>                # 从批量升级中排除
   opt-mgr unskip   <应用名>                # 恢复批量升级
   opt-mgr rollback <应用名>                # 回退到上一版本
-  opt-mgr cleanup  <应用名>                # 清理回退备份 (不填=全部)
+  opt-mgr clean    all | <应用名>...       # 清理回退备份
 
 install 选项:
   --icon <路径>     指定图标文件
@@ -852,23 +852,27 @@ cmd_unskip() {
 
 # ---------- cleanup ----------
 cmd_cleanup() {
-    local target="${1:-}"
+    shift  # 去掉 "clean" 子命令
     local dir="$HOME/.cache/opt-mgr/backups"
 
-    if [ -n "$target" ]; then
-        local app=$(resolve_app "$target")
-        local app_dir="$dir/$app"
-        [ ! -d "$app_dir" ] && { echo "$app: 没有备份文件。"; return; }
-        local count=$(find "$app_dir" -type f | wc -l)
-        rm -rf "$app_dir"
-        echo "$app: $count 个备份文件已删除。"
+    if [ "$1" = "all" ]; then
+        [ ! -d "$dir" ] && { echo "无备份文件。"; return; }
+        local count=$(find "$dir" -type f | wc -l)
+        rm -rf "$dir"/*
+        echo "全部清理完成, $count 个备份文件已删除。"
         return
     fi
 
-    [ ! -d "$dir" ] && { echo "无备份文件。"; return; }
-    local count=$(find "$dir" -type f | wc -l)
-    rm -rf "$dir"/*
-    echo "全部清理完成, $count 个备份文件已删除。"
+    [ $# -eq 0 ] && { echo "用法: opt-mgr clean all | <应用名>..."; return 1; }
+
+    for target in "$@"; do
+        local app=$(resolve_app "$target")
+        local app_dir="$dir/$app"
+        [ ! -d "$app_dir" ] && { echo "$app: 没有备份文件。"; continue; }
+        local count=$(find "$app_dir" -type f | wc -l)
+        rm -rf "$app_dir"
+        echo "$app: $count 个备份文件已删除。"
+    done
 }
 
 # ---------- info ----------
@@ -930,7 +934,8 @@ case "$1" in
     skip)     cmd_skip     "${2:-}" ;;
     unskip)   cmd_unskip   "${2:-}" ;;
     info)     cmd_info     "${2:-}" ;;
-    cleanup)  cmd_cleanup  "${2:-}" ;;
+    cleanup)  shift; cmd_cleanup "$@" ;;
+    clean)    shift; cmd_cleanup "$@" ;;
     list)     cmd_list ;;
     set-repo) cmd_set_repo "${2:-}" "$3" "$4" ;;
     check)    cmd_check    "${2:-}" ;;
