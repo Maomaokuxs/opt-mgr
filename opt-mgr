@@ -109,67 +109,16 @@ default_pattern() {
     local ftype="$1"
     local archs=($(detect_arch))
     case "$ftype" in
-        tar)
-            [ -d "$target_dir" ] && sudo tar -czf "$backup_dir/prev.tar.gz" -C "$(dirname "$target_dir")" "$(basename "$target_dir")" 2>/dev/null
-            local strip_flag=""
-            local unique
-            unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
-            [ "$unique" -eq 1 ] && strip_flag="--strip-components=1"
-            sudo tar -xzf "$file" -C "$target_dir" $strip_flag --no-same-permissions --overwrite
-
-            binary=$(get_conf "$app" "binary")
-            [ ! -f "${target_dir}/$binary" ] && binary=$(find_binary "$target_dir" "$app")
-            sudo chmod +x "${target_dir}/$binary"
-
-            exec_cmd=$(get_conf "$app" "exec")
-            if [ -z "$exec_cmd" ]; then
-                exec_cmd="${target_dir}/$binary"
-            elif echo "$exec_cmd" | grep -q "{}"; then
-                exec_cmd="${exec_cmd/\{\}/"${target_dir}/$binary"}"
-            elif [ -n "$old_binary" ]; then
-                exec_cmd="${exec_cmd//${old_binary}/${binary}}"
-            fi
-
-            set_conf "$app" "binary" "$binary"
-            set_conf "$app" "type" "tar"
-
-            icon=$(find_icon_in_dir "$target_dir")
-            [ -n "$icon" ] && icon="${target_dir}/$icon"
-            ;;
-
-        jar|appimage|file)
-            [ -f "${target_dir}/$old_binary" ] && cp "${target_dir}/$old_binary" "$backup_dir/prev" 2>/dev/null
-            binary="$name"
-            if [ -n "$old_binary" ] && [ -f "${target_dir}/$old_binary" ] && [ "$old_binary" != "$binary" ]; then
-                sudo rm -f "${target_dir}/$old_binary"
-            fi
-            sudo cp "$file" "${target_dir}/$name"
-            [ "$ftype" != "jar" ] && sudo chmod +x "${target_dir}/$name"
-
-            exec_cmd=$(get_conf "$app" "exec")
-            if [ -n "$exec_cmd" ] && echo "$exec_cmd" | grep -q "{}"; then
-                exec_cmd="${exec_cmd/\{\}/"${target_dir}/$name"}"
-            elif [ -n "$old_binary" ] && [ -n "$exec_cmd" ]; then
-                exec_cmd="${exec_cmd//${old_binary}/${name}}"
-            else
-                [ "$ftype" = "jar" ] && exec_cmd="java -jar ${target_dir}/$name" || exec_cmd="${target_dir}/$name"
-            fi
-
-            set_conf "$app" "binary" "$binary"
-            set_conf "$app" "type" "$ftype"
-            ;;
-
         rpm)
-            binary="$name"
-            if command -v dnf5 &>/dev/null || dnf --version 2>/dev/null | grep -q "dnf5"; then
-                sudo dnf install -y "$file"
-            else
-                sudo dnf install -y "$file" 2>/dev/null || sudo rpm -U "$file"
-            fi
-            set_conf "$app" "binary" "$binary"
-            set_conf "$app" "type" "rpm"
-            return
-            ;;
+            for a in "${archs[@]}"; do echo "*${a}.rpm"; return; done
+            echo "*.rpm" ;;
+        tar)
+            for a in "${archs[@]}"; do echo "*linux_${a}.tar.gz"; return; done
+            echo "*linux*.tar.gz" ;;
+        appimage)
+            echo "*.AppImage" ;;
+        jar) echo "*.jar" ;;
+        *) echo "*" ;;
     esac
 }
 
@@ -251,7 +200,6 @@ cmd_install() {
 
     case "$ftype" in
         tar)
-            [ -d "$target_dir" ] && sudo tar -czf "$backup_dir/prev.tar.gz" -C "$(dirname "$target_dir")" "$(basename "$target_dir")" 2>/dev/null
             local strip_flag=""
             local unique
             unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
@@ -421,7 +369,7 @@ for a in data.get('assets', []):
         fi
 
         local latest_ver=$(extract_version "$latest_tag")
-        [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ] && { echo "已是最新版本 ($current_ver)"; exit 0; }
+        [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ] && { echo "已是最新版本 ($current_ver)"; return 0; }
 
         echo "下载: $asset_name  ($latest_ver)"
         local tmp_dir="$HOME/.cache/opt-mgr/downloads"
@@ -434,7 +382,6 @@ for a in data.get('assets', []):
     [ -f "$file" ] || { echo "错误: 找不到文件 $file"; exit 1; }
 
     local app_type=$(get_conf "$app" "type")
-    local target_dir=$(opt_dir "$app")
     [ "$app_type" = "rpm" ] || [ -d "$target_dir" ] || { echo "错误: $target_dir 不存在，请先使用 install"; exit 1; }
 
     local old_binary=$(get_conf "$app" "binary")
