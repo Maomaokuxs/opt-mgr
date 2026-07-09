@@ -168,10 +168,17 @@ DESKTOP
     echo "  桌面快捷方式已创建: $desktop_file"
 }
 
-# 解析图标：本地文件或 URL，返回本地文件路径
+# 解析图标：本地文件、相对路径或 URL，返回本地文件路径
 resolve_icon() {
-    local src="$1" dest_dir="$2" app="$3"
-    if [ -z "$src" ] || [ ! -e "$src" -a "${src:0:4}" != "http" ]; then
+    local src="$1" dest_dir="$2" app="$3" repo="${4:-}"
+    if [ -z "$src" ]; then
+        return 1
+    fi
+    # 相对路径 → 拼接 GitHub raw URL
+    if [[ "$src" != http* ]] && [[ "$src" != /* ]] && [ -n "$repo" ]; then
+        src="https://raw.githubusercontent.com/${repo}/main/${src#/}"
+    fi
+    if [[ "$src" != http* ]] && [ ! -f "$src" ]; then
         return 1
     fi
     local ext name dest
@@ -359,7 +366,7 @@ cmd_install() {
             set_conf "$app" "binary" "$binary"
 
             if [ -n "$icon_opt" ]; then
-                local resolved=$(resolve_icon "$icon_opt" "/tmp" "$app")
+                local resolved=$(resolve_icon "$icon_opt" "/tmp" "$app" "$repo")
                 if [ -n "$resolved" ]; then
                     local icon_name=$(basename "$resolved")
                     sudo cp "$resolved" "${target_dir}/$icon_name"
@@ -389,7 +396,7 @@ cmd_install() {
             set_conf "$app" "binary" "$binary"
 
             if [ -n "$icon_opt" ]; then
-                local resolved=$(resolve_icon "$icon_opt" "/tmp" "$app")
+                local resolved=$(resolve_icon "$icon_opt" "/tmp" "$app" "$repo")
                 if [ -n "$resolved" ]; then
                     local icon_name=$(basename "$resolved")
                     sudo cp "$resolved" "${target_dir}/$icon_name"
@@ -415,7 +422,7 @@ cmd_install() {
             set_conf "$app" "binary" "$binary"
 
             if [ -n "$icon_opt" ]; then
-                local resolved=$(resolve_icon "$icon_opt" "/tmp" "$app")
+                local resolved=$(resolve_icon "$icon_opt" "/tmp" "$app" "$repo")
                 if [ -n "$resolved" ]; then
                     local icon_name=$(basename "$resolved")
                     sudo cp "$resolved" "${target_dir}/$icon_name"
@@ -1127,7 +1134,7 @@ cmd_conf() {
 
     # 处理 icon
     if [ -n "$icon_opt" ]; then
-        local tmp_icon=$(resolve_icon "$icon_opt" "/tmp" "$app")
+        local tmp_icon=$(resolve_icon "$icon_opt" "/tmp" "$app" "$repo")
         if [ -n "$tmp_icon" ]; then
             local icon_name=$(basename "$tmp_icon")
             local icon_dest="/opt/${app}/${icon_name}"
@@ -1415,16 +1422,16 @@ for a in data.get('assets', []):
 
     # 处理 --icon
     if [ -z "$icon_name" ] && [ -n "$icon_opt" ]; then
-        local resolved=$(resolve_icon "$icon_opt" "$HOME/rpmbuild/SOURCES" "$app")
+        local resolved=$(resolve_icon "$icon_opt" "$HOME/rpmbuild/SOURCES" "$app" "$repo")
         if [ -n "$resolved" ]; then
             icon_name=$(basename "$resolved")
-            echo "  图标: $icon_name (用户指定)"
+            echo "  图标: $icon_name"
         fi
     fi
 
     if [ -z "$icon_name" ] && [ "$ftype" != "jar" ] && [ "$ftype" != "rpm" ]; then
-        echo "错误: 需要 --icon <URL|路径>"
-        echo "  GitHub 图标通常位于: https://raw.githubusercontent.com/${repo}/main/assets/logo.png"
+        echo "错误: 需要 --icon <路径|URL>"
+        echo "  相对路径会自动拼接为: https://raw.githubusercontent.com/${repo}/main/<路径>"
         rm -f "$source_path"
         exit 1
     fi
