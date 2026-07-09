@@ -9,33 +9,42 @@ usage() {
 
 用法:
 
-  opt-mgr install  <应用名> [文件] [选项]                 # 安装或更新应用 (无文件=自动下载)
-  opt-mgr remove   <应用名> [--keep-conf]                 # 卸载应用, --keep-conf 保留配置
-  opt-mgr conf     <应用名> --repo owner/repo             # 仅创建配置，不安装
-  opt-mgr list                                            # 查看所有已管理应用
-  opt-mgr info     <应用名>                               # 查看应用详情 + 远端对比
-  opt-mgr check    <应用名>                               # 检查 GitHub 更新
-  opt-mgr upgrade  <应用名>                               # 下载升级 (不填应用名=全部)
-  opt-mgr skip     <应用名>                               # 从批量升级中排除
-  opt-mgr unskip   <应用名>                               # 恢复批量升级
-  opt-mgr rollback <应用名>                               # 回退到上一版本
-  opt-mgr clean    all | <应用名>...                      # 清理回退备份
-  opt-mgr build    <应用名> [--repo owner/repo] [选项]    # 构建 COPR RPM 包
+  opt-mgr install  <应用名> [文件] [选项]               # 安装或更新 (无文件=自动下载)
+  opt-mgr remove   <应用名> [--keep-conf]               # 卸载, --keep-conf 保留配置
+  opt-mgr conf     <应用名> --repo owner/repo [选项]    # 仅创建配置, 不安装
+  opt-mgr list                                          # 查看所有已管理应用
+  opt-mgr info     <应用名>                             # 查看应用详情 + 远端对比
+  opt-mgr check    [应用名]                             # 检查更新 (不填=全部)
+  opt-mgr upgrade  [应用名]                             # 升级 (不填=全部)
+  opt-mgr build    <应用名> [--repo] [选项]             # 构建 COPR RPM 包
+  opt-mgr set-repo <应用名> <owner/repo> [asset匹配]    # 配置仓库 (位置参数)
+  opt-mgr skip     <应用名>                             # 从批量升级中排除
+  opt-mgr unskip   <应用名>                             # 恢复批量升级
+  opt-mgr rollback <应用名>                             # 回退到上一版本
+  opt-mgr clean    all | <应用名>...                    # 清理回退备份
+
+install / conf / build 公用选项:
+
+  --repo <owner/repo>                                   # GitHub 仓库
+  --type <tar|jar|appimage>                             # 文件类型
+  --pattern <模式>                                      # asset 匹配 (自动按架构识别)
+  --icon <路径|URL>                                     # 图标 (支持本地文件和 GitHub raw URL)
+  --exec <前缀>                                         # Exec 命令, {} 占位 (仅 install/build)
 
 install 选项:
 
-  --icon <路径>                                           # 指定图标文件
-  --exec <前缀>                                           # Exec前缀, {} 占位二进制路径
-  --repo <owner/repo>                                     # GitHub 仓库 (首次配置后自动检查更新)
-  --pattern <模式>                                        # asset 匹配模式 (可选, 自动按架构识别)
+  --icon <路径>                                         # 指定图标文件
+  --exec <前缀>                                         # Exec前缀, {} 占位二进制路径
+  --repo <owner/repo>                                   # GitHub 仓库 (首次配置后自动检查更新)
+  --pattern <模式>                                      # asset 匹配模式 (可选, 自动按架构识别)
 
 支持的文件类型:
 
-  .tar.gz / .tgz                                          # 解压到 /opt/<应用名>/
-  .jar                                                    # java -jar 启动
-  .rpm                                                    # dnf 系统安装
-  .AppImage                                               # 复制到 /opt/<应用名>/ 直接执行
-  其他二进制文件                                          # 同上
+  .tar.gz / .tgz                                        # 解压到 /opt/<应用名>/
+  .jar                                                  # java -jar 启动
+  .rpm                                                  # dnf 系统安装
+  .AppImage                                             # 复制到 /opt/<应用名>/ 直接执行
+  其他二进制文件                                        # 同上
 
 示例:
 
@@ -90,9 +99,14 @@ set_conf() {
 find_binary() {
     local dir="$1" hint="$2"
     if [ -n "$hint" ] && [ -f "$dir/$hint" ] && [ -x "$dir/$hint" ]; then echo "$hint"; return; fi
+    # 优先匹配应用名（大小写不敏感）
     local found
     found=$(find "$dir" -maxdepth 2 -type f -executable -not -path "*/data/*" -not -path "*/lib/*" \
-        | grep -v '\.so' | head -1)
+        -iname "$hint" | grep -v '\.so' | head -1)
+    [ -n "$found" ] && basename "$found" && return
+    # 其次任意可执行文件
+    found=$(find "$dir" -maxdepth 2 -type f -executable -not -path "*/data/*" -not -path "*/lib/*" \
+        | grep -v '\.so' | grep -v 'chrome_crashpad\|chrome-sandbox' | head -1)
     [ -n "$found" ] && basename "$found" && return
     echo "$hint"
 }
@@ -631,6 +645,8 @@ cmd_list() {
 
 # ---------- set-repo ----------
 cmd_set_repo() {
+    [ $# -ge 2 ] || { echo "用法: opt-mgr set-repo <应用名> <owner/repo> [asset匹配模式]"; exit 1; }
+    [[ "$1" == -* ]] && { echo "错误: set-repo 第一个参数应为应用名，不是选项"; exit 1; }
     local app=$(resolve_app "$1"); shift
     local repo="${1:-}" pattern="${2:-}"
     [ -n "$repo" ] || { echo "用法: opt-mgr set-repo <应用名> <owner/repo> [asset匹配模式]"; exit 1; }
@@ -795,6 +811,7 @@ cmd_check() {
 cmd_upgrade() {
     local target="${1:-}"
 
+
     if [ -z "$target" ]; then
         local apps=()
         for conf in "$CONF_DIR"/*.conf; do
@@ -816,14 +833,7 @@ cmd_upgrade() {
             do_upgrade_one "$app" "$idx" "$total" || rc=$?
             case $rc in
                 0) upgraded=$((upgraded + 1)) ;;
-                1) failed=$((failed + 1)) ;;
-        rpm)
-            echo "提示: $app 本身是 RPM 包，无需 COPR 转包"
-            echo "  安装: sudo dnf install $download_url"
-            echo "  或用: opt-mgr install $app"
-            rm -f "$source_path"
-            exit 0
-            ;;
+                1) failed=$((failed + 1)) ;; 
     esac
         done
         [ $upgraded -eq 0 ] && [ $failed -eq 0 ] && echo "无须任何处理。"
@@ -976,8 +986,8 @@ cmd_unskip() {
     echo "$app: 已恢复批量升级"
 }
 
-# ---------- cleanup ----------
-cmd_cleanup() {
+# ---------- clean ----------
+cmd_clean() {
     shift  # 去掉 "clean" 子命令
     local dir="$HOME/.cache/opt-mgr/backups"
 
@@ -1223,7 +1233,8 @@ ${desktop_block}
 %check
 ${check_block}
 
-%files ${files_section}
+%files
+${files_section}
 SPECEOF
 
     if [ -n "$icon_name" ]; then
@@ -1366,8 +1377,11 @@ for a in data.get('assets', []):
             rm -rf "$tmpdir"
             ;;
         rpm)
-            binary="$asset_name"
-            echo "  类型: rpm (转包)"
+            echo "提示: $app 本身是 RPM 包，无需 COPR 转包"
+            echo "  安装: sudo dnf install $download_url"
+            echo "  或用: opt-mgr install $app"
+            rm -f "$source_path"
+            exit 0
             ;;
     esac
 
@@ -1405,19 +1419,18 @@ for a in data.get('assets', []):
 [ $# -ge 1 ] || usage
 
 case "$1" in
-    install)  shift; cmd_install "$@" ;;
-    remove)   shift; cmd_remove  "$@" ;;
+    install)  shift; cmd_install  "$@" ;;
+    remove)   shift; cmd_remove   "$@" ;;
+    conf)     shift; cmd_conf     "$@" ;;
+    build)    shift; cmd_build    "$@" ;;
+    clean)    shift; cmd_clean    "$@" ;;
     rollback) cmd_rollback "${2:-}" ;;
     skip)     cmd_skip     "${2:-}" ;;
     unskip)   cmd_unskip   "${2:-}" ;;
-    info)     cmd_info     "${2:-}" ;; 
-    cleanup)  shift; cmd_cleanup "$@" ;;
-    clean)    shift; cmd_cleanup "$@" ;;
-    list)     cmd_list ;;
+    info)     cmd_info     "${2:-}" ;;
     set-repo) cmd_set_repo "${2:-}" "$3" "$4" ;;
-    conf)     shift; cmd_conf "$@" ;;
-    check)    cmd_check    "${2:-}" ;; 
+    check)    cmd_check    "${2:-}" ;;
     upgrade)  cmd_upgrade  "${2:-}" ;;
-    build)    shift; cmd_build "$@" ;;
+    list)     cmd_list ;;
     *)        usage ;; 
 esac
