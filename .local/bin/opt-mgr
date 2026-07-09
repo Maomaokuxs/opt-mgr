@@ -1457,17 +1457,21 @@ cmd_build() {
     # 提交 COPR
     echo "===== 提交到 COPR: $copr_repo ====="
     local fedora_ver=$(rpm -E %fedora 2>/dev/null || echo 44)
+
+    local build_output
     if copr-cli list "$copr_repo" &>/dev/null; then
-        copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc${fedora_ver}.src.rpm"
+        build_output=$(copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc${fedora_ver}.src.rpm" 2>&1)
     else
         echo "  仓库 $copr_repo 不存在，正在创建..."
         copr-cli create "$copr_repo" --chroot fedora-${fedora_ver}-x86_64 --description "第三方应用软件仓库"
-        copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc${fedora_ver}.src.rpm"
+        build_output=$(copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc${fedora_ver}.src.rpm" 2>&1)
     fi
+
+    local build_id=$(echo "$build_output" | grep -oP 'Created builds: \K\d+')
 
     echo "===== 完成 ====="
     echo "  COPR: https://copr.fedorainfracloud.org/coprs/$(whoami)/${copr_repo}/"
-    echo "  安装: sudo dnf copr enable $(whoami)/${copr_repo} && sudo dnf install ${app,,}"
+    echo "  直链: https://download.copr.fedorainfracloud.org/results/$(whoami)/${copr_repo}/fedora-${fedora_ver}-x86_64/${build_id}-${app,,}/${app,,}-${latest_ver}-1.fc${fedora_ver}.x86_64.rpm"
 }
 
 # ---------- 入口 ----------
