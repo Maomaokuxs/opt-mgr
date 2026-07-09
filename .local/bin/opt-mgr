@@ -651,8 +651,9 @@ cmd_remove() {
         rm -f "$HOME/.local/share/applications/${app}.desktop"
         $keep_conf || rm -f "$CONF_DIR/${app}.conf"
     else
-        [ -d "$target_dir" ] || { echo "错误: $target_dir 不存在"; exit 1; }
-        sudo rm -rf "$target_dir"
+        if [ -d "$target_dir" ]; then
+            sudo rm -rf "$target_dir"
+        fi
         rm -f "$HOME/.local/share/applications/${app}.desktop"
         $keep_conf || rm -f "$CONF_DIR/${app}.conf"
     fi
