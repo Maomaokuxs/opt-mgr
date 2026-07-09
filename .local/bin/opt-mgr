@@ -101,13 +101,12 @@ find_binary() {
     if [ -n "$hint" ] && [ -f "$dir/$hint" ] && [ -x "$dir/$hint" ]; then echo "$hint"; return; fi
     # 优先匹配应用名（大小写不敏感）
     local found
-    found=$(find "$dir" -maxdepth 2 -type f -executable -not -path "*/data/*" -not -path "*/lib/*" \
+    found=$(find "$dir" -maxdepth 3 -type f -executable -not -path "*/data/*" -not -path "*/lib/*" \
         -iname "$hint" | grep -v '\.so' | head -1)
-    [ -n "$found" ] && basename "$found" && return
-    # 其次任意可执行文件
-    found=$(find "$dir" -maxdepth 2 -type f -executable -not -path "*/data/*" -not -path "*/lib/*" \
+    [ -n "$found" ] && echo "$found" | sed "s|^$dir/||" && return
+    found=$(find "$dir" -maxdepth 3 -type f -executable -not -path "*/data/*" -not -path "*/lib/*" \
         | grep -v '\.so' | grep -v 'chrome_crashpad\|chrome-sandbox' | head -1)
-    [ -n "$found" ] && basename "$found" && return
+    [ -n "$found" ] && echo "$found" | sed "s|^$dir/||" && return
     echo "$hint"
 }
 
