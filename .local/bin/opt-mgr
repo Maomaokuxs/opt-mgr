@@ -203,7 +203,7 @@ cmd_install() {
         file="$1"; shift
     fi
 
-    local icon_opt="" exec_prefix="" repo="" pattern="" app_type=""
+    local icon_opt="" exec_prefix="" repo="" pattern="" app_type="" local_only=false
     while [ $# -gt 0 ]; do
         case "$1" in
             --icon)    icon_opt="$2"; shift ;;
@@ -211,10 +211,40 @@ cmd_install() {
             --repo)    repo="$2"; shift ;;
             --pattern) pattern="$2"; shift ;;
             --type)    app_type="$2"; shift ;;
+            --local)   local_only=true ;;
             *) echo "未知选项: $1"; exit 1 ;;
         esac
         shift
     done
+
+    # 纯本地安装：跳过仓库配置和 .conf 创建
+    if $local_only && [ -n "$file" ]; then
+        local target_dir="/opt/$app"
+        local ftype=$(detect_file_type "$file")
+        local name=$(basename "$file")
+        echo "===== 本地安装 $app (类型: $ftype) ====="
+        sudo mkdir -p "$target_dir"
+        case "$ftype" in
+            tar)
+                local unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
+                local strip=""; [ "$unique" -eq 1 ] && strip="--strip-components=1"
+                sudo tar -xzf "$file" -C "$target_dir" $strip --no-same-permissions
+                local binary=$(find_binary "$target_dir" "$app")
+                sudo chmod +x "$target_dir/$binary"
+                create_desktop "$app" "${target_dir}/$binary" "$(find_icon_in_dir "$target_dir")" "${app^} 应用"
+                ;;
+            jar|appimage|file)
+                sudo cp "$file" "${target_dir}/$name"
+                [ "$ftype" != "jar" ] && sudo chmod +x "${target_dir}/$name"
+                local exec_cmd="${target_dir}/$name"
+                [ "$ftype" = "jar" ] && exec_cmd="java -jar ${target_dir}/$name"
+                create_desktop "$app" "$exec_cmd" "" "${app^} 应用"
+                ;;
+        esac
+        echo "===== 本地安装完成 (无仓库配置) ====="
+        return
+    fi
+    $local_only && { echo "错误: --local 需要提供安装文件"; exit 1; }
 
     local target_dir="/opt/$app"
     local real_dir=$(opt_dir "$app")
@@ -618,29 +648,35 @@ cmd_remove() {
 # ---------- list ----------
 cmd_list() {
     echo "已管理的应用:"
-    local found=0
+    local found=0 installed=0 configured=0
     for conf in "$CONF_DIR"/*.conf; do
         [ -f "$conf" ] || continue
         local app=$(basename "$conf" .conf)
         local app_type=$(get_conf "$app" "type")
         local binary=$(get_conf "$app" "binary")
-        local exec_cmd=$(get_conf "$app" "exec")
-        local icon=$(get_conf "$app" "icon")
         local target_dir=$(opt_dir "$app")
         local ver=$(get_conf "$app" "version")
         local repo=$(get_conf "$app" "repo")
         local skip=$(get_conf "$app" "skip")
-        echo "  $app"
-        echo "    路径:    $target_dir"
-        echo "    类型:    ${app_type:-未知}  |  版本: ${ver:-未知}"
-        echo "    文件:    $binary"
-        echo "    Exec:    ${exec_cmd:-}"
-        echo "    图标:    ${icon:-无}"
+
+        local status_icon="○" status_text="仅配置"
+        if [ -n "$binary" ] && [ -f "$target_dir/$binary" ]; then
+            status_icon="●"; status_text="已安装"
+        elif [ "$app_type" = "rpm" ] && [ -n "$binary" ] && rpm -q "${binary%%.rpm}" &>/dev/null 2>&1; then
+            status_icon="●"; status_text="已安装(rpm)"
+        fi
+
+        echo "  $status_icon $app  ($status_text)"
+        echo "    版本:    ${ver:-未知}  |  类型: ${app_type:-未知}"
+        echo "    路径:    ${target_dir:-无}"
         [ -n "$repo" ] && echo "    GitHub:  $repo"
         [ "$skip" = "1" ] && echo "    批量升级: 已排除"
         found=1
+        [ "$status_text" = "仅配置" ] && configured=$((configured+1)) || installed=$((installed+1))
     done
     [ $found -eq 0 ] && echo "  (无)"
+    echo ""
+    echo "  $installed 个已安装, $configured 个仅配置"
 }
 
 # ---------- set-repo ----------
@@ -1413,6 +1449,7 @@ for a in data.get('assets', []):
 
     echo "===== 完成 ====="
     echo "  COPR: https://copr.fedorainfracloud.org/coprs/$(whoami)/${copr_repo}/"
+    echo "  安装: sudo dnf copr enable $(whoami)/${copr_repo} && sudo dnf install ${app,,}"
 }
 
 # ---------- 入口 ----------
