@@ -142,7 +142,7 @@ default_pattern() {
 
 detect_file_type() {
     case "$1" in
-        *.tar.gz|*.tgz) echo "tar" ;;
+        *.tar.gz|*.tgz|*.tar.xz) echo "tar" ;;
         *.jar)           echo "jar" ;;
         *.rpm)           echo "rpm" ;;
         *.AppImage)      echo "appimage" ;;
