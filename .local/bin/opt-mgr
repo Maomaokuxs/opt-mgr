@@ -114,7 +114,7 @@ find_binary() {
 find_icon_in_dir() {
     find "$1" -maxdepth 6 \( -name "*.png" -o -name "*.svg" \) \
         ! -path "*/data/*" ! -path "*/lib/*" ! -path "*node_modules*" \
-        2>/dev/null | head -1 | sed "s|^$1/||"
+        2>/dev/null | xargs ls -1S 2>/dev/null | head -1 | sed "s|^$1/||"
 }
 
 detect_arch() {
