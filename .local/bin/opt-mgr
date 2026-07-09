@@ -1143,10 +1143,9 @@ cmd_conf() {
         local tmp_icon=$(resolve_icon "$icon_opt" "/tmp" "$app" "$repo")
         if [ -n "$tmp_icon" ]; then
             local icon_name=$(basename "$tmp_icon")
-            local icon_dest="/opt/${app}/${icon_name}"
-            sudo mkdir -p "/opt/${app}"
-            sudo cp "$tmp_icon" "$icon_dest"
-            sudo chown "$USER:" "$icon_dest" 2>/dev/null
+            local icon_dest="$CONF_DIR/icons/${app}.${icon_name##*.}"
+            mkdir -p "$CONF_DIR/icons"
+            cp "$tmp_icon" "$icon_dest"
             set_conf "$app" "icon" "$icon_dest"
             rm -f "$tmp_icon"
             echo "  图标:   $icon_dest"
