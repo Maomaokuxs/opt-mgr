@@ -9,42 +9,42 @@ usage() {
 
 用法:
 
-  opt-mgr install  <应用名> [文件] [选项]               # 安装或更新 (无文件=自动下载)
-  opt-mgr remove   <应用名> [--keep-conf]               # 卸载, --keep-conf 保留配置
-  opt-mgr conf     <应用名> --repo owner/repo [选项]    # 仅创建配置, 不安装
-  opt-mgr list                                          # 查看所有已管理应用
-  opt-mgr info     <应用名>                             # 查看应用详情 + 远端对比
-  opt-mgr check    [应用名]                             # 检查更新 (不填=全部)
-  opt-mgr upgrade  [应用名]                             # 升级 (不填=全部)
-  opt-mgr build    <应用名> [--repo] [选项]             # 构建 COPR RPM 包
-  opt-mgr set-repo <应用名> <owner/repo> [asset匹配]    # 配置仓库 (位置参数)
-  opt-mgr skip     <应用名>                             # 从批量升级中排除
-  opt-mgr unskip   <应用名>                             # 恢复批量升级
-  opt-mgr rollback <应用名>                             # 回退到上一版本
-  opt-mgr clean    all | <应用名>...                    # 清理回退备份
+  opt-mgr install  <应用名> [文件] [选项]                    # 安装或更新 (无文件=自动下载)
+  opt-mgr remove   <应用名> [--keep-conf]                    # 卸载, --keep-conf 保留配置
+  opt-mgr conf     <应用名> --repo owner/repo [选项]         # 仅创建配置, 不安装
+  opt-mgr list                                               # 查看所有已管理应用
+  opt-mgr info     <应用名>                                  # 查看应用详情 + 远端对比
+  opt-mgr check    [应用名]                                  # 检查更新 (不填=全部)
+  opt-mgr upgrade  [应用名]                                  # 升级 (不填=全部)
+  opt-mgr build    <应用名> [--repo] [--type 类型] [选项]    # 构建 COPR RPM, --type 可覆盖 .conf
+  opt-mgr set-repo <应用名> <owner/repo> [asset匹配]         # 配置仓库 (位置参数)
+  opt-mgr skip     <应用名>                                  # 从批量升级中排除
+  opt-mgr unskip   <应用名>                                  # 恢复批量升级
+  opt-mgr rollback <应用名>                                  # 回退到上一版本
+  opt-mgr clean    all | <应用名>...                         # 清理回退备份
 
 install / conf / build 公用选项:
 
-  --repo <owner/repo>                                   # GitHub 仓库
-  --type <tar|jar|appimage>                             # 文件类型
-  --pattern <模式>                                      # asset 匹配 (自动按架构识别)
-  --icon <路径|URL>                                     # 图标 (支持本地文件和 GitHub raw URL)
-  --exec <前缀>                                         # Exec 命令, {} 占位 (仅 install/build)
+  --repo <owner/repo>                                        # GitHub 仓库
+  --type <tar|jar|appimage>                                  # 文件类型
+  --pattern <模式>                                           # asset 匹配 (自动按架构识别)
+  --icon <路径|URL>                                          # 图标 (支持本地文件和 GitHub raw URL)
+  --exec <前缀>                                              # Exec 命令, {} 占位 (仅 install/build)
 
 install 选项:
 
-  --icon <路径>                                         # 指定图标文件
-  --exec <前缀>                                         # Exec前缀, {} 占位二进制路径
-  --repo <owner/repo>                                   # GitHub 仓库 (首次配置后自动检查更新)
-  --pattern <模式>                                      # asset 匹配模式 (可选, 自动按架构识别)
+  --icon <路径>                                              # 指定图标文件
+  --exec <前缀>                                              # Exec前缀, {} 占位二进制路径
+  --repo <owner/repo>                                        # GitHub 仓库 (首次配置后自动检查更新)
+  --pattern <模式>                                           # asset 匹配模式 (可选, 自动按架构识别)
 
 支持的文件类型:
 
-  .tar.gz / .tgz                                        # 解压到 /opt/<应用名>/
-  .jar                                                  # java -jar 启动
-  .rpm                                                  # dnf 系统安装
-  .AppImage                                             # 复制到 /opt/<应用名>/ 直接执行
-  其他二进制文件                                        # 同上
+  .tar.gz / .tgz                                             # 解压到 /opt/<应用名>/
+  .jar                                                       # java -jar 启动
+  .rpm                                                       # dnf 系统安装
+  .AppImage                                                  # 复制到 /opt/<应用名>/ 直接执行
+  其他二进制文件                                             # 同上
 
 示例:
 
@@ -1413,9 +1413,10 @@ for a in data.get('assets', []):
             rm -rf "$tmpdir"
             ;;
         rpm)
-            echo "提示: $app 本身是 RPM 包，无需 COPR 转包"
-            echo "  安装: sudo dnf install $download_url"
-            echo "  或用: opt-mgr install $app"
+            echo "提示: .conf 中类型为 rpm，跳过构建"
+            echo "  如果仓库也提供 tar.gz，可以:"
+            echo "    opt-mgr build $app --type tar --pattern '*tar.gz 匹配模式'"
+            echo "  或直接用 RPM: sudo dnf install $download_url"
             rm -f "$source_path"
             exit 0
             ;;
