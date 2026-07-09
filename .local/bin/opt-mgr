@@ -112,7 +112,7 @@ find_binary() {
 }
 
 find_icon_in_dir() {
-    find "$1" -maxdepth 6 \( -name "*.png" -o -name "*.svg" \) \
+    find "$1" -maxdepth 6 \( -name "*.png" -o -name "*.svg" -o -name "*.ico" \) \
         ! -path "*/data/*" ! -path "*/lib/*" ! -path "*node_modules*" \
         2>/dev/null | xargs ls -1S 2>/dev/null | head -1 | sed "s|^$1/||"
 }
@@ -176,7 +176,9 @@ resolve_icon() {
     fi
     # 相对路径 → 拼接 GitHub raw URL
     if [[ "$src" != http* ]] && [[ "$src" != /* ]] && [ -n "$repo" ]; then
-        src="https://raw.githubusercontent.com/${repo}/main/${src#/}"
+        local branch=$(curl -sL "https://api.github.com/repos/${repo}" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('default_branch','main'))" 2>/dev/null)
+        branch="${branch:-main}"
+        src="https://raw.githubusercontent.com/${repo}/${branch}/${src#/}"
     fi
     if [[ "$src" != http* ]] && [ ! -f "$src" ]; then
         return 1
