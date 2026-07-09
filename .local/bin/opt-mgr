@@ -1150,6 +1150,8 @@ cmd_conf() {
             set_conf "$app" "icon" "$icon_dest"
             rm -f "$tmp_icon"
             echo "  图标:   $icon_dest"
+        else
+            echo "错误: 图标下载失败，配置未保存"; exit 1
         fi
     fi
 
@@ -1355,17 +1357,22 @@ cmd_build() {
     mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SPECS"
 
     # 提前检查图标（避免下载完再报错）
+    local need_icon=true
+    [ "$app_type" = "jar" ] || [ "$app_type" = "rpm" ] && need_icon=false
     if [ -n "$icon_opt" ]; then
         local resolved=$(resolve_icon "$icon_opt" "$HOME/rpmbuild/SOURCES" "$app" "$repo")
         if [ -n "$resolved" ]; then
             icon_name=$(basename "$resolved")
             echo "  图标: $icon_name"
         else
-            echo "错误: 图标获取失败"
-            echo "  请检查路径: $icon_opt"
+            echo "错误: 图标获取失败，请检查路径"
             [ -n "$repo" ] && echo "  完整 URL: https://raw.githubusercontent.com/${repo}/main/${icon_opt#/}"
             exit 1
         fi
+    elif $need_icon; then
+        echo "错误: 需要 --icon <路径|URL>"
+        echo "  相对路径: https://raw.githubusercontent.com/${repo:-owner/repo}/main/<路径>"
+        exit 1
     fi
 
     # 获取最新 release
@@ -1439,13 +1446,6 @@ for a in data.get('assets', []):
             exit 0
             ;;
     esac
-
-    if [ -z "$icon_name" ] && [ "$ftype" != "jar" ] && [ "$ftype" != "rpm" ]; then
-        echo "错误: 需要 --icon <路径|URL>"
-        echo "  相对路径: https://raw.githubusercontent.com/${repo}/main/<路径>"
-        rm -f "$source_path"
-        exit 1
-    fi
 
     # 生成 spec
     gen_spec "$app" "$latest_ver" "$repo" "$ftype" "$download_url" "$binary" "$strip" "$icon_name" "$exec_prefix"
