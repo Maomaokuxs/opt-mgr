@@ -27,7 +27,7 @@ _opt_mgr_completion() {
         remove)
             case "$prev" in
                 remove)  COMPREPLY=($(compgen -W "${apps[*]}" -- "$cur")) ;;
-                *)       COMPREPLY=($(compgen -W "--keep-conf" -- "$cur")) ;;
+                *)       COMPREPLY=($(compgen -W "--purge" -- "$cur")) ;; 
             esac
             ;;
         rollback|skip|unskip|info)

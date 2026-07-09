@@ -10,7 +10,7 @@ usage() {
 用法:
 
   opt-mgr install  <应用名> [文件] [选项]                    # 安装或更新 (无文件=自动下载)
-  opt-mgr remove   <应用名> [--keep-conf]                    # 卸载, --keep-conf 保留配置
+  opt-mgr remove   <应用名> [--purge]                        # 卸载, 默认保留配置
   opt-mgr conf     <应用名> --repo owner/repo [选项]         # 仅创建配置, 不安装
   opt-mgr list                                               # 查看所有已管理应用
   opt-mgr info     <应用名>                                  # 查看应用详情 + 远端对比
@@ -632,10 +632,10 @@ cmd_update() {
 cmd_remove() {
     local app=$(resolve_app "$1")
     shift
-    local keep_conf=false
+    local purge=false
     while [ $# -gt 0 ]; do
         case "$1" in
-            --keep-conf) keep_conf=true ;;
+            --purge) purge=true ;;
             *) shift; continue ;;
         esac
         shift
@@ -649,15 +649,15 @@ cmd_remove() {
         local pkg=$(rpm -qf "$(get_conf "$app" "binary" 2>/dev/null || echo "")" 2>/dev/null)
         [ -n "$pkg" ] && sudo dnf remove -y "$pkg" 2>/dev/null
         rm -f "$HOME/.local/share/applications/${app}.desktop"
-        $keep_conf || rm -f "$CONF_DIR/${app}.conf"
+        $purge && rm -f "$CONF_DIR/${app}.conf"
     else
         if [ -d "$target_dir" ]; then
             sudo rm -rf "$target_dir"
         fi
         rm -f "$HOME/.local/share/applications/${app}.desktop"
-        $keep_conf || rm -f "$CONF_DIR/${app}.conf"
+        $purge && rm -f "$CONF_DIR/${app}.conf"
     fi
-    $keep_conf && echo "  已保留配置: $CONF_DIR/${app}.conf"
+    $purge && echo "  已清除配置: $CONF_DIR/${app}.conf"
     echo "===== 卸载完成 ====="
 }
 
