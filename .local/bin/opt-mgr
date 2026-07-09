@@ -646,8 +646,7 @@ cmd_remove() {
 
     echo "===== 卸载 $app ====="
     if [ "$app_type" = "rpm" ]; then
-        local pkg=$(rpm -qf "$(get_conf "$app" "binary" 2>/dev/null || echo "")" 2>/dev/null)
-        [ -n "$pkg" ] && sudo dnf remove -y "$pkg" 2>/dev/null
+        echo "  RPM 包请用 dnf 管理: sudo dnf remove $(get_conf "$app" "binary" | sed 's/-[0-9].*//')"
         rm -f "$HOME/.local/share/applications/${app}.desktop"
         $purge && rm -f "$CONF_DIR/${app}.conf"
     else
