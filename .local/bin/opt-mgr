@@ -1466,8 +1466,6 @@ for a in data.get('assets', []):
     echo "===== 完成 ====="
     echo "  COPR: https://copr.fedorainfracloud.org/coprs/$(whoami)/${copr_repo}/"
     echo "  安装: sudo dnf copr enable $(whoami)/${copr_repo} && sudo dnf install ${app,,}"
-    echo "  刷新中..."
-    copr-cli regenerate-repos "$copr_repo" >/dev/null 2>&1
 }
 
 # ---------- 入口 ----------
