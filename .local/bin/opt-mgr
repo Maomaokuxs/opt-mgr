@@ -1348,12 +1348,16 @@ cmd_build() {
 
     local current_ver=$(get_conf "$app" "version")
     [ -z "$app_type" ] && app_type=$(get_conf "$app" "type")
+    local icon_name=""
 
     echo "===== 构建 $app RPM 包 ====="
     echo "  仓库: $repo"
 
     init_conf
     mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SPECS"
+
+    # 从 .conf 读取缺失参数
+    [ -z "$icon_opt" ] && { local si=$(get_conf "$app" "icon"); [ -n "$si" ] && [ -f "$si" ] && icon_opt="$si"; }
 
     # 提前检查图标（避免下载完再报错）
     local need_icon=true
@@ -1412,7 +1416,7 @@ for a in data.get('assets', []):
     # 分析文件
     [ -z "$app_type" ] && app_type=$(detect_file_type "$asset_name")
     local ftype="$app_type"
-    local binary="" icon_name="" strip=""
+    local binary="" strip=""
 
     case "$ftype" in
         jar)
