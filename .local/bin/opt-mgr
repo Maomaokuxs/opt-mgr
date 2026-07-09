@@ -244,7 +244,7 @@ cmd_install() {
         sudo mkdir -p "$target_dir"
         case "$ftype" in
             tar)
-                local unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
+                local unique=$(tar -taf "$file" | cut -d/ -f1 | sort -u | wc -l)
                 local strip=""; [ "$unique" -eq 1 ] && strip="--strip-components=1"
                 sudo tar -xaf "$file" -C "$target_dir" $strip --no-same-permissions
                 local binary=$(find_binary "$target_dir" "$app")
@@ -357,7 +357,7 @@ cmd_install() {
         tar)
             local strip_flag=""
             local unique
-            unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
+            unique=$(tar -taf "$file" | cut -d/ -f1 | sort -u | wc -l)
             [ "$unique" -eq 1 ] && strip_flag="--strip-components=1"
             sudo tar -xaf "$file" -C "$target_dir" $strip_flag --no-same-permissions
             echo "  -> 已解压到 $target_dir"
@@ -562,7 +562,7 @@ cmd_update() {
             [ -d "$target_dir" ] && sudo tar -czf "$backup_dir/prev.tar.gz" -C "$(dirname "$target_dir")" "$(basename "$target_dir")" 2>/dev/null
             local strip_flag=""
             local unique
-            unique=$(tar -tzf "$file" | cut -d/ -f1 | sort -u | wc -l)
+            unique=$(tar -taf "$file" | cut -d/ -f1 | sort -u | wc -l)
             [ "$unique" -eq 1 ] && strip_flag="--strip-components=1"
             sudo tar -xaf "$file" -C "$target_dir" $strip_flag --no-same-permissions --overwrite
 
@@ -1429,9 +1429,9 @@ cmd_build() {
             local tmpdir=$(mktemp -d /tmp/opt-mgr-build.XXXXXX)
             tar xzf "$source_path" -C "$tmpdir" 2>/dev/null
 
-            local unique=$(tar tzf "$source_path" | cut -d/ -f1 | sort -u | wc -l)
+            local unique=$(tar taf "$source_path" | cut -d/ -f1 | sort -u | wc -l)
             local search_dir="$tmpdir"
-            [ "$unique" -eq 1 ] && { search_dir="$tmpdir/$(tar tzf "$source_path" | cut -d/ -f1 | sort -u)"; strip="1"; }
+            [ "$unique" -eq 1 ] && { search_dir="$tmpdir/$(tar taf "$source_path" | cut -d/ -f1 | sort -u)"; strip="1"; }
 
             binary=$(find_binary "$search_dir" "$app")
             echo "  可执行文件: $binary"
