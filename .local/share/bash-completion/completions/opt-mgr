@@ -1,48 +1,65 @@
-# bash completion for opt-mgr - 无需额外依赖
+# bash completion for opt-mgr
 _opt_mgr_completion() {
-    local cur prev
+    local cur prev cmd
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
+    cmd="${COMP_WORDS[1]}"
 
-    local commands="install remove rollback skip unskip info list set-repo check upgrade cleanup clean"
+    local commands="install remove rollback skip unskip info list set-repo check upgrade clean build conf"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
         return
     fi
 
-    local cmd="${COMP_WORDS[1]}"
+    # 提取已管理应用列表
+    local apps=()
+    shopt -s nullglob
+    for conf in "$HOME/.config/opt-mgr/"*.conf; do
+        apps+=("$(basename "$conf" .conf)")
+    done
+    shopt -u nullglob
+
+    # 通用选项
+    local common_opts="--type --repo --pattern --icon --exec"
+
     case "$cmd" in
-        update|remove|rollback|skip|unskip|info|set-repo)
+        remove)
+            case "$prev" in
+                remove)  COMPREPLY=($(compgen -W "${apps[*]}" -- "$cur")) ;;
+                *)       COMPREPLY=($(compgen -W "--keep-conf" -- "$cur")) ;;
+            esac
+            ;;
+        rollback|skip|unskip|info)
             if [ "$COMP_CWORD" -eq 2 ]; then
-                local apps=()
-                shopt -s nullglob
-                for conf in "$HOME/.config/opt-mgr/"*.conf; do
-                    apps+=("$(basename "$conf" .conf)")
-                done
-                shopt -u nullglob
                 COMPREPLY=($(compgen -W "${apps[*]}" -- "$cur"))
             fi
             ;;
         install)
-            COMPREPLY=($(compgen -f -- "$cur"))
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "${apps[*]}" -f -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "$common_opts" -- "$cur"))
+            fi
+            ;;
+        build)
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "${apps[*]}" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "$common_opts --copr" -- "$cur"))
+            fi
+            ;;
+        conf)
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -f -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "$common_opts" -- "$cur"))
+            fi
             ;;
         check|upgrade)
-            local apps=()
-            shopt -s nullglob
-            for conf in "$HOME/.config/opt-mgr/"*.conf; do
-                apps+=("$(basename "$conf" .conf)")
-            done
-            shopt -u nullglob
             COMPREPLY=($(compgen -W "all ${apps[*]}" -- "$cur"))
             ;;
         clean)
-            local apps=()
-            shopt -s nullglob
-            for conf in "$HOME/.config/opt-mgr/"*.conf; do
-                apps+=("$(basename "$conf" .conf)")
-            done
-            shopt -u nullglob
             COMPREPLY=($(compgen -W "all ${apps[*]}" -- "$cur"))
             ;;
     esac

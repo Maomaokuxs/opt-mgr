@@ -9,33 +9,33 @@ usage() {
 
 用法:
 
-  opt-mgr install  <应用名> [文件] [选项]    # 安装或更新应用 (无文件=自动下载)
-  opt-mgr remove   <应用名> [--keep-conf]     # 卸载应用, --keep-conf 保留配置
-  opt-mgr conf     <应用名> --repo owner/repo  # 仅创建配置，不安装
-  opt-mgr list                               # 查看所有已管理应用
-  opt-mgr info     <应用名>                  # 查看应用详情 + 远端对比
-  opt-mgr check    <应用名>                  # 检查 GitHub 更新
-  opt-mgr upgrade  <应用名>                  # 下载升级 (不填应用名=全部)
-  opt-mgr skip     <应用名>                  # 从批量升级中排除
-  opt-mgr unskip   <应用名>                  # 恢复批量升级
-  opt-mgr rollback <应用名>                  # 回退到上一版本
-  opt-mgr clean    all | <应用名>...         # 清理回退备份
-  opt-mgr build    <应用名> [--repo owner/repo] [选项]  # 构建 COPR RPM 包
+  opt-mgr install  <应用名> [文件] [选项]                 # 安装或更新应用 (无文件=自动下载)
+  opt-mgr remove   <应用名> [--keep-conf]                 # 卸载应用, --keep-conf 保留配置
+  opt-mgr conf     <应用名> --repo owner/repo             # 仅创建配置，不安装
+  opt-mgr list                                            # 查看所有已管理应用
+  opt-mgr info     <应用名>                               # 查看应用详情 + 远端对比
+  opt-mgr check    <应用名>                               # 检查 GitHub 更新
+  opt-mgr upgrade  <应用名>                               # 下载升级 (不填应用名=全部)
+  opt-mgr skip     <应用名>                               # 从批量升级中排除
+  opt-mgr unskip   <应用名>                               # 恢复批量升级
+  opt-mgr rollback <应用名>                               # 回退到上一版本
+  opt-mgr clean    all | <应用名>...                      # 清理回退备份
+  opt-mgr build    <应用名> [--repo owner/repo] [选项]    # 构建 COPR RPM 包
 
 install 选项:
 
-  --icon <路径>                              # 指定图标文件
-  --exec <前缀>                              # Exec前缀, {} 占位二进制路径
-  --repo <owner/repo>                        # GitHub 仓库 (首次配置后自动检查更新)
-  --pattern <模式>                           # asset 匹配模式 (可选, 自动按架构识别)
+  --icon <路径>                                           # 指定图标文件
+  --exec <前缀>                                           # Exec前缀, {} 占位二进制路径
+  --repo <owner/repo>                                     # GitHub 仓库 (首次配置后自动检查更新)
+  --pattern <模式>                                        # asset 匹配模式 (可选, 自动按架构识别)
 
 支持的文件类型:
 
-  .tar.gz / .tgz                             # 解压到 /opt/<应用名>/
-  .jar                                       # java -jar 启动
-  .rpm                                       # dnf 系统安装
-  .AppImage                                  # 复制到 /opt/<应用名>/ 直接执行
-  其他二进制文件                             # 同上
+  .tar.gz / .tgz                                          # 解压到 /opt/<应用名>/
+  .jar                                                    # java -jar 启动
+  .rpm                                                    # dnf 系统安装
+  .AppImage                                               # 复制到 /opt/<应用名>/ 直接执行
+  其他二进制文件                                          # 同上
 
 示例:
 
