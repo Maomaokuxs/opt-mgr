@@ -241,6 +241,9 @@ cmd_install() {
         local ftype=$(detect_file_type "$file")
         local name=$(basename "$file")
         echo "===== 本地安装 $app (类型: $ftype) ====="
+        if [ -d "$target_dir" ]; then
+            sudo rm -rf "$target_dir"
+        fi
         sudo mkdir -p "$target_dir"
         case "$ftype" in
             tar)
@@ -349,6 +352,10 @@ cmd_install() {
     init_conf
 
     echo "===== 安装 $app (类型: $ftype) ====="
+    if [ -d "$target_dir" ]; then
+        echo "  -> 清理旧目录: $target_dir"
+        sudo rm -rf "$target_dir"
+    fi
     sudo mkdir -p "$target_dir"
 
     local binary="" exec_cmd="" icon=""
