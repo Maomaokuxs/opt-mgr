@@ -134,7 +134,7 @@ default_pattern() {
         tar)    echo "*linux_*.tar.gz" ;;
         appimage) echo "*.AppImage" ;;
         jar)    echo "*.jar" ;;
-        *)      echo "*" ;;
+        *)      echo "*linux*x86_64*|*linux*amd64*|*linux*x86-64*|*linux*" ;;
     esac
 }
 
@@ -728,16 +728,16 @@ gh_tag_name()    { echo "$1" | python3 -c "import sys,json; print(json.load(sys.
 gh_published()   { echo "$1" | python3 -c "import sys,json; print(json.load(sys.stdin).get('published_at','')[:10])" 2>/dev/null; }
 
 match_asset() {
-    # 用法: match_asset <json> <pattern> <mode>
-    # mode=url  → 输出下载链接, mode=name → 输出文件名
-    local json="$1" pattern="$2" mode="${3:-url}"
+    [[ "$2" == *"|"* ]] && local patterns="$2" || local patterns="${2:-*}"
+    local json="$1" mode="${3:-url}"
     echo "$json" | python3 -c "
 import sys, json, fnmatch
 data = json.load(sys.stdin)
-for a in data.get('assets', []):
-    if fnmatch.fnmatch(a['name'], '$pattern'):
-        print(a['browser_download_url'] if '$mode' == 'url' else a['name'])
-        break
+for p in '''${patterns}'''.split('|'):
+    for a in data.get('assets', []):
+        if fnmatch.fnmatch(a['name'], p.strip()):
+            print(a['browser_download_url'] if '$mode' == 'url' else a['name'])
+            sys.exit(0)
 " 2>/dev/null
 }
 
