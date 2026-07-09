@@ -1401,16 +1401,6 @@ for a in data.get('assets', []):
 
             binary=$(find_binary "$search_dir" "$app")
             echo "  可执行文件: $binary"
-
-            local found_icon=""
-            if [ -z "$icon_opt" ]; then
-                found_icon=$(find_icon_in_dir "$search_dir")
-            fi
-            if [ -n "$found_icon" ]; then
-                icon_name="${app}-icon.${found_icon##*.}"
-                cp "$search_dir/$found_icon" "$HOME/rpmbuild/SOURCES/$icon_name" 2>/dev/null
-                echo "  图标: $icon_name (从归档提取)"
-            fi
             rm -rf "$tmpdir"
             ;;
         rpm)
@@ -1430,6 +1420,13 @@ for a in data.get('assets', []):
             icon_name=$(basename "$resolved")
             echo "  图标: $icon_name (用户指定)"
         fi
+    fi
+
+    if [ -z "$icon_name" ] && [ "$ftype" != "jar" ] && [ "$ftype" != "rpm" ]; then
+        echo "错误: 需要 --icon <URL|路径>"
+        echo "  GitHub 图标通常位于: https://raw.githubusercontent.com/${repo}/main/assets/logo.png"
+        rm -f "$source_path"
+        exit 1
     fi
 
     # 生成 spec
