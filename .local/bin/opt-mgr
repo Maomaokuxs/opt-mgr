@@ -4,6 +4,9 @@ set -e
 SCRIPT_NAME="opt-mgr"
 CONF_DIR="$HOME/.config/opt-mgr"
 
+# 核心依赖检查
+command -v python3 &>/dev/null || { echo "错误: 需要 python3"; exit 1; }
+
 usage() {
     cat <<'EOF'
 
@@ -113,7 +116,7 @@ find_binary() {
 find_icon_in_dir() {
     find "$1" -maxdepth 6 \( -name "*.png" -o -name "*.svg" -o -name "*.ico" \) \
         ! -path "*/data/*" ! -path "*/lib/*" ! -path "*node_modules*" \
-        2>/dev/null | xargs ls -1S 2>/dev/null | head -1 | sed "s|^$1/||"
+        2>/dev/null | xargs -r ls -1S 2>/dev/null | head -1 | sed "s|^$1/||"
 }
 
 detect_arch() {
@@ -133,7 +136,7 @@ default_pattern() {
         tar)    echo "*linux_*.tar.gz" ;;
         appimage) echo "*.AppImage" ;;
         jar)    echo "*.jar" ;;
-        *)      echo "*linux*x86_64*|*linux*amd64*|*linux*x86-64*|*linux*" ;;
+        *)      echo "*linux*${archs[0]}*|*linux*${archs[1]}*|*linux*x86-64*|*linux*" ;;
     esac
 }
 
@@ -191,7 +194,7 @@ resolve_icon() {
         >&2 echo "  下载图标: $src"
         download_file "$src" "$dest" >&2 2>&1 || { >&2 echo "  错误: 图标下载失败"; return 1; }
         # 检查是否为 HTML 错误页
-        if head -c1 "$dest" 2>/dev/null | grep -q '<\|{'; then
+        if head -c1 "$dest" 2>/dev/null | grep -qP '^<[!?]' || head -c1 "$dest" 2>/dev/null | grep -q '{'; then
             >&2 echo "  错误: 图标文件无效 (可能是404)"
             rm -f "$dest"
             return 1
@@ -493,6 +496,7 @@ cmd_update() {
 
     local app=$(resolve_app "$app_input")
     local target_dir=$(opt_dir "$app")
+    local binary="" exec_cmd="" icon=""
 
     # 无文件参数 → 自动从 GitHub 下载最新版
     if [ -z "$file" ]; then
@@ -677,7 +681,7 @@ cmd_list() {
         local status_icon="○" status_text="仅配置"
         if [ -n "$binary" ] && [ -f "$target_dir/$binary" ]; then
             status_icon="●"; status_text="已安装"
-        elif [ "$app_type" = "rpm" ] && [ -n "$binary" ] && rpm -q "${binary%%.rpm}" &>/dev/null 2>&1; then
+        elif [ "$app_type" = "rpm" ] && [ -n "$binary" ] && rpm -q "${binary%%-[0-9]*}" &>/dev/null 2>&1; then
             status_icon="●"; status_text="已安装(rpm)"
         fi
 
@@ -997,7 +1001,7 @@ cmd_rollback() {
             ;;
         jar|appimage|file)
             [ ! -f "$backup_dir/prev" ] && { echo "$app: 备份文件不存在"; exit 1; }
-            prev_binary=$(cat "$backup_dir/prev_binary" 2>/dev/null || echo "")
+            local prev_binary=$(cat "$backup_dir/prev_binary" 2>/dev/null || echo "")
             sudo cp "$backup_dir/prev" "${target_dir}/${prev_binary:-$app}"
             echo "  文件已还原"
             ;;
@@ -1012,8 +1016,8 @@ cmd_rollback() {
     esac
 
     # 恢复配置
-    prev_exec=$(cat "$backup_dir/prev_exec" 2>/dev/null)
-    prev_icon=$(cat "$backup_dir/prev_icon" 2>/dev/null)
+    local prev_exec=$(cat "$backup_dir/prev_exec" 2>/dev/null)
+    local prev_icon=$(cat "$backup_dir/prev_icon" 2>/dev/null)
     [ -n "$prev_exec" ] && set_conf "$app" "exec" "$prev_exec"
     [ -n "$prev_icon" ] && set_conf "$app" "icon" "$prev_icon"
     set_conf "$app" "version" "$prev_ver"
@@ -1039,7 +1043,7 @@ cmd_unskip() {
 
 # ---------- clean ----------
 cmd_clean() {
-    shift  # 去掉 "clean" 子命令
+    # 入口已 shift，$@ 是 clean 之后的参数
     local dir="$HOME/.cache/opt-mgr/backups"
 
     if [ "$1" = "all" ]; then
@@ -1113,6 +1117,7 @@ cmd_info() {
 
 # ---------- conf ----------
 cmd_conf() {
+    [ $# -ge 1 ] || { echo "用法: opt-mgr conf <应用名> --repo owner/repo [选项]"; exit 1; }
     local app_input="$1"; shift
     local app=$(resolve_app "$app_input")
     local repo="" pattern="" app_type="" icon_opt=""
@@ -1397,17 +1402,8 @@ cmd_build() {
     pattern="${pattern:-$(default_pattern "$app_type")}"
 
     local result download_url asset_name
-        result=$(echo "$json" | python3 -c "
-import sys, json, fnmatch
-data = json.load(sys.stdin)
-for a in data.get('assets', []):
-    if fnmatch.fnmatch(a['name'], '${pattern:-*}'):
-        print(a['browser_download_url'])
-        print(a['name'])
-        break
-" 2>/dev/null)
-    download_url=$(echo "$result" | head -1)
-    asset_name=$(echo "$result" | tail -1)
+    download_url=$(match_asset "$json" "$pattern" url)
+    asset_name=$(match_asset "$json" "$pattern" name)
     [ -z "$download_url" ] && { echo "错误: 未匹配到下载文件 (模式: ${pattern:-*})"; exit 1; }
 
     echo "  下载: $asset_name"
@@ -1460,12 +1456,13 @@ for a in data.get('assets', []):
 
     # 提交 COPR
     echo "===== 提交到 COPR: $copr_repo ====="
+    local fedora_ver=$(rpm -E %fedora 2>/dev/null || echo 44)
     if copr-cli list "$copr_repo" &>/dev/null; then
-        copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc44.src.rpm"
+        copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc${fedora_ver}.src.rpm"
     else
         echo "  仓库 $copr_repo 不存在，正在创建..."
-        copr-cli create "$copr_repo" --chroot fedora-44-x86_64 --description "第三方应用软件仓库"
-        copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc44.src.rpm"
+        copr-cli create "$copr_repo" --chroot fedora-${fedora_ver}-x86_64 --description "第三方应用软件仓库"
+        copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc${fedora_ver}.src.rpm"
     fi
 
     echo "===== 完成 ====="
