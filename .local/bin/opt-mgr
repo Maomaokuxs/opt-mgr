@@ -10,7 +10,8 @@ usage() {
 用法:
 
   opt-mgr install  <应用名> [文件] [选项]    # 安装或更新应用 (无文件=自动下载)
-  opt-mgr remove   <应用名>                  # 卸载应用
+  opt-mgr remove   <应用名> [--keep-conf]     # 卸载应用, --keep-conf 保留配置
+  opt-mgr conf     <应用名> --repo owner/repo  # 仅创建配置，不安装
   opt-mgr list                               # 查看所有已管理应用
   opt-mgr info     <应用名>                  # 查看应用详情 + 远端对比
   opt-mgr check    <应用名>                  # 检查 GitHub 更新
@@ -19,6 +20,7 @@ usage() {
   opt-mgr unskip   <应用名>                  # 恢复批量升级
   opt-mgr rollback <应用名>                  # 回退到上一版本
   opt-mgr clean    all | <应用名>...         # 清理回退备份
+  opt-mgr build    <应用名> [--repo owner/repo] [选项]  # 构建 COPR RPM 包
 
 install 选项:
 
@@ -114,7 +116,7 @@ default_pattern() {
     local archs=($(detect_arch))
     case "$ftype" in
         rpm)    echo "*${archs[0]}.rpm" ;;
-        tar)    echo "*linux_${archs[0]}.tar.gz" ;;
+        tar)    echo "*linux_*.tar.gz" ;;
         appimage) echo "*.AppImage" ;;
         jar)    echo "*.jar" ;;
         *)      echo "*" ;;
@@ -151,6 +153,30 @@ DESKTOP
     echo "  桌面快捷方式已创建: $desktop_file"
 }
 
+# 解析图标：本地文件或 URL，返回本地文件路径
+resolve_icon() {
+    local src="$1" dest_dir="$2" app="$3"
+    if [ -z "$src" ] || [ ! -e "$src" -a "${src:0:4}" != "http" ]; then
+        return 1
+    fi
+    local ext name dest
+    if [[ "$src" =~ ^https?:// ]]; then
+        ext="${src##*.}"; ext="${ext%%\?*}"
+        [ "${#ext}" -gt 5 ] && ext="png"
+        name="${app}-icon.${ext}"
+        dest="${dest_dir}/${name}"
+        >&2 echo "  下载图标: $src"
+        download_file "$src" "$dest" >&2 2>&1 || return 1
+        echo "$dest"
+    elif [ -f "$src" ]; then
+        ext="${src##*.}"
+        name="${app}-icon.${ext}"
+        dest="${dest_dir}/${name}"
+        cp "$src" "$dest"
+        echo "$dest"
+    fi
+}
+
 # ---------- install ----------
 cmd_install() {
     [ $# -ge 1 ] || usage
@@ -163,13 +189,14 @@ cmd_install() {
         file="$1"; shift
     fi
 
-    local icon_opt="" exec_prefix="" repo="" pattern=""
+    local icon_opt="" exec_prefix="" repo="" pattern="" app_type=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --icon)    icon_opt="$2"; shift ;;
             --exec)    exec_prefix="$2"; shift ;;
             --repo)    repo="$2"; shift ;;
             --pattern) pattern="$2"; shift ;;
+            --type)    app_type="$2"; shift ;;
             *) echo "未知选项: $1"; exit 1 ;;
         esac
         shift
@@ -178,21 +205,24 @@ cmd_install() {
     local target_dir="/opt/$app"
     local real_dir=$(opt_dir "$app")
     if [ -d "$real_dir" ] && [ -n "$repo" ] && [ -z "$file" ]; then
-        # 已有安装 + --repo + 无文件 → 仅补仓库信息
-        init_conf
-        set_conf "$app" "opt_dir" "$real_dir"
-        set_conf "$app" "repo" "$repo"
-        local existing_pat=$(get_conf "$app" "asset_pattern")
-        if [ -n "$pattern" ]; then
-            set_conf "$app" "asset_pattern" "$pattern"
-        elif [ -z "$existing_pat" ] || [ "$existing_pat" = "*" ]; then
-            set_conf "$app" "asset_pattern" "$(default_pattern "$(get_conf "$app" "type")")"
+        local existing_binary=$(get_conf "$app" "binary")
+        if [ -n "$existing_binary" ] && [ -f "$real_dir/$existing_binary" ]; then
+            # 已有安装 + --repo + 无文件 → 仅补仓库信息
+            init_conf
+            set_conf "$app" "opt_dir" "$real_dir"
+            set_conf "$app" "repo" "$repo"
+            local existing_pat=$(get_conf "$app" "asset_pattern")
+            if [ -n "$pattern" ]; then
+                set_conf "$app" "asset_pattern" "$pattern"
+            elif [ -z "$existing_pat" ] || [ "$existing_pat" = "*" ]; then
+                set_conf "$app" "asset_pattern" "$(default_pattern "$(get_conf "$app" "type")")"
+            fi
+            local ver=$(get_conf "$app" "binary" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
+            [ -n "$ver" ] && set_conf "$app" "version" "$ver"
+            [ -z "$(get_conf "$app" "type")" ] && set_conf "$app" "type" "$(detect_file_type "$existing_binary")"
+            echo "已为 $app 配置 GitHub 仓库: $repo"
+            return
         fi
-        local ver=$(get_conf "$app" "binary" | grep -oP '[\d]+\.[\d]+(\.[\d]+)?' | head -1)
-        [ -n "$ver" ] && set_conf "$app" "version" "$ver"
-        [ -z "$(get_conf "$app" "type")" ] && set_conf "$app" "type" "$(detect_file_type "$(get_conf "$app" "binary")")"
-        echo "已为 $app 配置 GitHub 仓库: $repo"
-        return
     fi
 
     # 已存在则走更新
@@ -205,22 +235,29 @@ cmd_install() {
 
     # 无文件 + 有仓库 → 自动下载
     if [ -z "$file" ]; then
-        local repo_cfg=$(get_conf "$app" "repo")
-        [ -z "$repo_cfg" ] && { echo "错误: 需要文件路径或 --repo 配置"; exit 1; }
+        [ -z "$repo" ] && repo=$(get_conf "$app" "repo")
+        [ -z "$repo" ] && { echo "错误: 需要文件路径或 --repo 配置"; exit 1; }
         echo "===== 自动下载 $app ====="
-        local json=$(gh_api_latest "$repo_cfg")
+        local json=$(gh_api_latest "$repo")
         local api_rc=$?
         if [ $api_rc -ne 0 ]; then
             [ $api_rc -ne 2 ] && echo "错误: 请求 GitHub API 失败"
             exit 1
         fi
-        local app_type=$(get_conf "$app" "type")
+        local conf_type=$(get_conf "$app" "type")
+        [ -z "$app_type" ] && app_type="$conf_type"
         local pat=$(get_conf "$app" "asset_pattern")
         pat="${pat:-$(default_pattern "$app_type")}"
+        if [ -z "$app_type" ] && [ -z "$(get_conf "$app" "asset_pattern")" ]; then
+            >&2 echo "提示: 未指定类型和匹配模式，将下载匹配的第一个文件"
+            >&2 echo "      建议: install 时加 --type jar|tar|appimage 和 --pattern '模式'"
+            >&2 echo "      或在 conf 中设置 type= 和 asset_pattern="
+        fi
         local latest_tag=$(gh_tag_name "$json")
         local latest_ver=$(extract_version "$latest_tag")
         local current_ver=$(get_conf "$app" "version")
-        if [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ]; then
+        local target_dir=$(opt_dir "$app")
+        if [ -d "$target_dir" ] && [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ]; then
             echo "已是最新版本 ($current_ver)"
             return 0
         fi
@@ -276,11 +313,16 @@ cmd_install() {
             set_conf "$app" "type" "tar"
             set_conf "$app" "binary" "$binary"
 
-            if [ -n "$icon_opt" ] && [ -f "$icon_opt" ]; then
-                local ext="${icon_opt##*.}"
-                sudo cp "$icon_opt" "${target_dir}/icon.${ext}"
-                icon="${target_dir}/icon.${ext}"
-            else
+            if [ -n "$icon_opt" ]; then
+                local resolved=$(resolve_icon "$icon_opt" "/tmp" "$app")
+                if [ -n "$resolved" ]; then
+                    local icon_name=$(basename "$resolved")
+                    sudo cp "$resolved" "${target_dir}/$icon_name"
+                    icon="${target_dir}/$icon_name"
+                    rm -f "$resolved"
+                fi
+            fi
+            if [ -z "$icon" ]; then
                 icon=$(find_icon_in_dir "$target_dir")
                 [ -n "$icon" ] && icon="${target_dir}/$icon"
             fi
@@ -301,10 +343,14 @@ cmd_install() {
             set_conf "$app" "type" "jar"
             set_conf "$app" "binary" "$binary"
 
-            if [ -n "$icon_opt" ] && [ -f "$icon_opt" ]; then
-                local ext="${icon_opt##*.}"
-                sudo cp "$icon_opt" "${target_dir}/icon.${ext}"
-                icon="${target_dir}/icon.${ext}"
+            if [ -n "$icon_opt" ]; then
+                local resolved=$(resolve_icon "$icon_opt" "/tmp" "$app")
+                if [ -n "$resolved" ]; then
+                    local icon_name=$(basename "$resolved")
+                    sudo cp "$resolved" "${target_dir}/$icon_name"
+                    icon="${target_dir}/$icon_name"
+                    rm -f "$resolved"
+                fi
             fi
             ;;
 
@@ -323,10 +369,14 @@ cmd_install() {
             set_conf "$app" "type" "$ftype"
             set_conf "$app" "binary" "$binary"
 
-            if [ -n "$icon_opt" ] && [ -f "$icon_opt" ]; then
-                local ext="${icon_opt##*.}"
-                sudo cp "$icon_opt" "${target_dir}/icon.${ext}"
-                icon="${target_dir}/icon.${ext}"
+            if [ -n "$icon_opt" ]; then
+                local resolved=$(resolve_icon "$icon_opt" "/tmp" "$app")
+                if [ -n "$resolved" ]; then
+                    local icon_name=$(basename "$resolved")
+                    sudo cp "$resolved" "${target_dir}/$icon_name"
+                    icon="${target_dir}/$icon_name"
+                    rm -f "$resolved"
+                fi
             fi
             ;;
 
@@ -522,7 +572,16 @@ cmd_update() {
 # ---------- remove ----------
 cmd_remove() {
     local app=$(resolve_app "$1")
-    [ $# -eq 1 ] || usage
+    shift
+    local keep_conf=false
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --keep-conf) keep_conf=true ;;
+            *) shift; continue ;;
+        esac
+        shift
+    done
+
     local target_dir=$(opt_dir "$app")
     local app_type=$(get_conf "$app" "type")
 
@@ -531,13 +590,14 @@ cmd_remove() {
         local pkg=$(rpm -qf "$(get_conf "$app" "binary" 2>/dev/null || echo "")" 2>/dev/null)
         [ -n "$pkg" ] && sudo dnf remove -y "$pkg" 2>/dev/null
         rm -f "$HOME/.local/share/applications/${app}.desktop"
-        rm -f "$CONF_DIR/${app}.conf"
+        $keep_conf || rm -f "$CONF_DIR/${app}.conf"
     else
         [ -d "$target_dir" ] || { echo "错误: $target_dir 不存在"; exit 1; }
         sudo rm -rf "$target_dir"
         rm -f "$HOME/.local/share/applications/${app}.desktop"
-        rm -f "$CONF_DIR/${app}.conf"
+        $keep_conf || rm -f "$CONF_DIR/${app}.conf"
     fi
+    $keep_conf && echo "  已保留配置: $CONF_DIR/${app}.conf"
     echo "===== 卸载完成 ====="
 }
 
@@ -757,7 +817,14 @@ cmd_upgrade() {
             case $rc in
                 0) upgraded=$((upgraded + 1)) ;;
                 1) failed=$((failed + 1)) ;;
-            esac
+        rpm)
+            echo "提示: $app 本身是 RPM 包，无需 COPR 转包"
+            echo "  安装: sudo dnf install $download_url"
+            echo "  或用: opt-mgr install $app"
+            rm -f "$source_path"
+            exit 0
+            ;;
+    esac
         done
         [ $upgraded -eq 0 ] && [ $failed -eq 0 ] && echo "无须任何处理。"
         [ $failed -gt 0 ] && echo "完成: $upgraded 成功, $failed 失败"
@@ -983,21 +1050,374 @@ cmd_info() {
     fi
 }
 
+# ---------- conf ----------
+cmd_conf() {
+    local app_input="$1"; shift
+    local app=$(resolve_app "$app_input")
+    local repo="" pattern="" app_type="" icon_opt=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --repo)    repo="$2"; shift ;;
+            --type)    app_type="$2"; shift ;;
+            --pattern) pattern="$2"; shift ;;
+            --icon)    icon_opt="$2"; shift ;;
+            *) echo "未知选项: $1"; exit 1 ;;
+        esac
+        shift
+    done
+
+    [ -z "$repo" ] && repo=$(get_conf "$app" "repo")
+    [ -z "$repo" ] && { echo "用法: opt-mgr conf <应用名> --repo owner/repo [--type tar|jar|appimage] [--pattern 模式] [--icon url/路径]"; exit 1; }
+
+    [ -z "$app_type" ] && app_type=$(get_conf "$app" "type")
+    [ -z "$pattern" ] && pattern=$(get_conf "$app" "asset_pattern")
+
+    init_conf
+    set_conf "$app" "repo" "$repo"
+    [ -n "$app_type" ] && set_conf "$app" "type" "$app_type"
+    [ -n "$pattern" ] && set_conf "$app" "asset_pattern" "$pattern"
+
+    # 处理 icon
+    if [ -n "$icon_opt" ]; then
+        local tmp_icon=$(resolve_icon "$icon_opt" "/tmp" "$app")
+        if [ -n "$tmp_icon" ]; then
+            local icon_name=$(basename "$tmp_icon")
+            local icon_dest="/opt/${app}/${icon_name}"
+            sudo mkdir -p "/opt/${app}"
+            sudo cp "$tmp_icon" "$icon_dest"
+            sudo chown "$USER:" "$icon_dest" 2>/dev/null
+            set_conf "$app" "icon" "$icon_dest"
+            rm -f "$tmp_icon"
+            echo "  图标:   $icon_dest"
+        fi
+    fi
+
+    echo "已配置 $app:"
+    echo "  仓库:   $repo"
+    echo "  类型:   ${app_type:-自动检测}"
+    echo "  匹配:   ${pattern:-自动检测}"
+    echo "  文件:   $CONF_DIR/${app}.conf"
+}
+
+# ---------- spec 生成 ----------
+gen_spec() {
+    local app="$1" ver="$2" repo="$3" ftype="$4" dl_url="$5" binary="$6"
+    local strip="$7" icon_name="$8" exec_prefix="$9"
+    local pkg="${app,,}"         display="${app^}"
+    local icon_source=""         icon_install=""
+    local strip_arg=""           exec_line="Exec=%{name}"
+    local jar_path="%{_libdir}/%{name}/${binary}"
+
+    [ "$strip" = "1" ] && strip_arg="--strip-components=1"
+
+    # 构建 Exec 行（desktop entry）
+    if [ -n "$exec_prefix" ]; then
+        if [[ "$exec_prefix" == *\{\}* ]]; then
+            exec_line="Exec=${exec_prefix//\{\}/${jar_path}}"
+        else
+            exec_line="Exec=${exec_prefix} ${jar_path}"
+        fi
+    elif [ "$ftype" = "jar" ]; then
+        exec_line="Exec=java -jar ${jar_path}"
+    fi
+
+    if [ -n "$icon_name" ]; then
+        icon_source="
+Source1:        ${icon_name}"
+        icon_install="
+mkdir -p %{buildroot}%{_datadir}/icons/hicolor/256x256/apps
+install -m 644 %{SOURCE1} %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/%{name}.${icon_name##*.}"
+    fi
+
+    local install_cmd=""
+    case "$ftype" in
+        rpm)
+            install_cmd="rpm2cpio %{SOURCE0} | cpio -idmv
+find . -path ./BUILDROOT -prune -o -type f -print -o -type l -print | sed 's|^\\./|/|' > ../%{name}.files
+for d in */; do case \"\$d\" in BUILDROOT/|SPECPARTS/) ;; *) cp -a \"\$d\" %{buildroot}/ ;; esac; done"
+            ;;
+        tar)
+            install_cmd="tar xzf %{SOURCE0} -C %{buildroot}%{_libdir}/%{name} ${strip_arg}
+for f in %{buildroot}%{_libdir}/%{name}/${binary} %{buildroot}%{_libdir}/%{name}/lib/*.so; do
+    chrpath -r '\$ORIGIN/lib' \"\$f\" 2>/dev/null || true
+done
+chmod +x %{buildroot}%{_libdir}/%{name}/${binary}"
+            ;;
+        jar)
+            local wrapper_cmd="${exec_prefix:-java -jar}"
+            if [[ "$wrapper_cmd" == *\{\}* ]]; then
+                wrapper_cmd="${wrapper_cmd//\{\}/${jar_path}}"
+            else
+                wrapper_cmd="${wrapper_cmd} ${jar_path}"
+            fi
+            install_cmd="install -m 644 %{SOURCE0} %{buildroot}%{_libdir}/%{name}/${binary}
+cat > %{buildroot}%{_bindir}/%{name} <<WRAPEOF
+#!/bin/sh
+exec ${wrapper_cmd} \"\$@\"
+WRAPEOF
+chmod +x %{buildroot}%{_bindir}/%{name}"
+            ;; 
+        appimage|file)
+            install_cmd="install -m 755 %{SOURCE0} %{buildroot}%{_libdir}/%{name}/${binary}"
+            ;;
+    esac
+
+    local requires=""
+    [ "$ftype" = "jar" ] && requires="Requires:       java"
+
+    local ln_cmd="ln -s %{_libdir}/%{name}/${binary} %{buildroot}%{_bindir}/%{name}"
+    [ "$ftype" = "jar" ] && ln_cmd=""   # jar 用自建 wrapper
+    [ "$ftype" = "rpm" ] && ln_cmd=""   # rpm 自带文件布局
+    local files_section="%{_bindir}/%{name}
+%{_libdir}/%{name}/
+%{_datadir}/applications/%{name}.desktop"
+    [ "$ftype" = "rpm" ] && files_section="-f %{name}.files"
+    local desktop_block="mkdir -p %{buildroot}%{_datadir}/applications
+cat > %{buildroot}%{_datadir}/applications/%{name}.desktop <<DESKEOF
+[Desktop Entry]
+Name=${display}
+Comment=${display} 应用
+${exec_line}
+Icon=%{name}
+Terminal=false
+Type=Application
+Categories=Utility;
+StartupWMClass=${display}
+DESKEOF"
+    [ "$ftype" = "rpm" ] && desktop_block=""
+    [ "$ftype" = "rpm" ] && check_block="" || check_block="desktop-file-validate %{buildroot}%{_datadir}/applications/%{name}.desktop"
+
+    cat > "$HOME/rpmbuild/SPECS/${app}.spec" <<SPECEOF
+%global debug_package %{nil}
+%global __provides_exclude ^(%{_libdir}/%{name}/.*\\.so)
+%global __requires_exclude ^(libmpv|libflutter|libdart|libapp).*
+
+Name:           ${pkg}
+Version:        ${ver}
+Release:        1%{?dist}
+Summary:        ${display} 应用
+
+License:        Unknown
+URL:            https://github.com/${repo}
+Source0:        ${dl_url}${icon_source}
+${requires}
+BuildRequires:  desktop-file-utils
+BuildRequires:  chrpath
+BuildRequires:  rpm-build
+
+%description
+${display} 第三方应用。
+
+%prep
+mkdir -p %{name}-%{version}
+cd %{name}-%{version}
+
+%build
+
+%install
+mkdir -p %{buildroot}%{_libdir}/%{name} %{buildroot}%{_bindir} %{buildroot}%{_datadir}/applications
+${install_cmd}
+${ln_cmd}${icon_install}
+${desktop_block}
+%check
+${check_block}
+
+%files ${files_section}
+SPECEOF
+
+    if [ -n "$icon_name" ]; then
+        echo "%{_datadir}/icons/hicolor/256x256/apps/%{name}.${icon_name##*.}" >> "$HOME/rpmbuild/SPECS/${app}.spec"
+    fi
+
+    cat >> "$HOME/rpmbuild/SPECS/${app}.spec" <<SPECEOF
+
+%changelog
+* $(LC_TIME=C date +"%a %b %d %Y") Maomaokuxs <biyuanh@qq.com> - ${ver}-1
+- Auto-generated by opt-mgr build
+SPECEOF
+
+    mkdir -p "$CONF_DIR/specs"
+    cp "$HOME/rpmbuild/SPECS/${app}.spec" "$CONF_DIR/specs/${app}.spec"
+    echo "  已生成 spec: $HOME/rpmbuild/SPECS/${app}.spec"
+}
+
+# ---------- build ----------
+cmd_build() {
+    local app_input="$1"
+    [ $# -ge 1 ] || { echo "用法: opt-mgr build <应用名> [--repo owner/repo] [--copr 仓库] [--icon 路径] [--exec 前缀] [--pattern 模式]"; exit 1; }
+    shift
+
+    local app=$(resolve_app "$app_input")
+    local repo="" copr_repo="apps" icon_opt="" exec_prefix="" pattern="" app_type=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --repo)    repo="$2"; shift ;;
+            --copr)    copr_repo="$2"; shift ;;
+            --icon)    icon_opt="$2"; shift ;;
+            --exec)    exec_prefix="$2"; shift ;;
+            --pattern) pattern="$2"; shift ;;
+            --type)    app_type="$2"; shift ;;
+            *) echo "未知选项: $1"; exit 1 ;;
+        esac
+        shift
+    done
+
+    [ -z "$repo" ] && repo=$(get_conf "$app" "repo")
+    [ -z "$repo" ] && { echo "错误: 需要 --repo owner/repo"; exit 1; }
+
+    # 从 .conf 读取 exec_prefix 和 icon
+    if [ -z "$exec_prefix" ]; then
+        local stored_exec=$(get_conf "$app" "exec")
+        if [ -n "$stored_exec" ]; then
+            local opt_dir=$(get_conf "$app" "opt_dir")
+            local conf_binary=$(get_conf "$app" "binary")
+            if [ -n "$opt_dir" ] && [ -n "$conf_binary" ]; then
+                exec_prefix="${stored_exec//"${opt_dir}/${conf_binary}"/\{\}}"
+            else
+                exec_prefix="${stored_exec}"
+            fi
+        fi
+    fi
+    if [ -z "$icon_opt" ]; then
+        local stored_icon=$(get_conf "$app" "icon")
+        [ -n "$stored_icon" ] && [ -f "$stored_icon" ] && icon_opt="$stored_icon"
+    fi
+
+    local current_ver=$(get_conf "$app" "version")
+    [ -z "$app_type" ] && app_type=$(get_conf "$app" "type")
+
+    echo "===== 构建 $app RPM 包 ====="
+    echo "  仓库: $repo"
+
+    init_conf
+    mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SPECS"
+
+    # 获取最新 release
+    local json
+    json=$(gh_api_latest "$repo")
+    local api_rc=$?
+    if [ $api_rc -ne 0 ]; then
+        [ $api_rc -ne 2 ] && echo "错误: GitHub API 请求失败"
+        exit 1
+    fi
+
+    local latest_tag=$(echo "$json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+    local latest_ver=$(extract_version "$latest_tag")
+    echo "  版本: $latest_ver"
+
+    # 匹配 asset
+    [ -z "$pattern" ] && pattern=$(get_conf "$app" "asset_pattern")
+    pattern="${pattern:-$(default_pattern "$app_type")}"
+
+    local result download_url asset_name
+        result=$(echo "$json" | python3 -c "
+import sys, json, fnmatch
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    if fnmatch.fnmatch(a['name'], '${pattern:-*}'):
+        print(a['browser_download_url'])
+        print(a['name'])
+        break
+" 2>/dev/null)
+    download_url=$(echo "$result" | head -1)
+    asset_name=$(echo "$result" | tail -1)
+    [ -z "$download_url" ] && { echo "错误: 未匹配到下载文件 (模式: ${pattern:-*})"; exit 1; }
+
+    echo "  下载: $asset_name"
+    local source_path="$HOME/rpmbuild/SOURCES/$asset_name"
+    download_file "$download_url" "$source_path" || { echo "错误: 下载失败"; rm -f "$source_path"; exit 1; }
+
+    # 分析文件
+    [ -z "$app_type" ] && app_type=$(detect_file_type "$asset_name")
+    local ftype="$app_type"
+    local binary="" icon_name="" strip=""
+
+    case "$ftype" in
+        jar)
+            binary="$asset_name"
+            echo "  类型: jar"
+            ;;
+        appimage|file)
+            binary="$asset_name"
+            echo "  类型: $ftype"
+            ;;
+        tar)
+            echo "  类型: tar"
+            local tmpdir=$(mktemp -d /tmp/opt-mgr-build.XXXXXX)
+            tar xzf "$source_path" -C "$tmpdir" 2>/dev/null
+
+            local unique=$(tar tzf "$source_path" | cut -d/ -f1 | sort -u | wc -l)
+            local search_dir="$tmpdir"
+            [ "$unique" -eq 1 ] && { search_dir="$tmpdir/$(tar tzf "$source_path" | cut -d/ -f1 | sort -u)"; strip="1"; }
+
+            binary=$(find_binary "$search_dir" "$app")
+            echo "  可执行文件: $binary"
+
+            local found_icon=""
+            if [ -z "$icon_opt" ]; then
+                found_icon=$(find_icon_in_dir "$search_dir")
+            fi
+            if [ -n "$found_icon" ]; then
+                icon_name="${app}-icon.${found_icon##*.}"
+                cp "$search_dir/$found_icon" "$HOME/rpmbuild/SOURCES/$icon_name" 2>/dev/null
+                echo "  图标: $icon_name (从归档提取)"
+            fi
+            rm -rf "$tmpdir"
+            ;;
+        rpm)
+            binary="$asset_name"
+            echo "  类型: rpm (转包)"
+            ;;
+    esac
+
+    # 处理 --icon
+    if [ -z "$icon_name" ] && [ -n "$icon_opt" ]; then
+        local resolved=$(resolve_icon "$icon_opt" "$HOME/rpmbuild/SOURCES" "$app")
+        if [ -n "$resolved" ]; then
+            icon_name=$(basename "$resolved")
+            echo "  图标: $icon_name (用户指定)"
+        fi
+    fi
+
+    # 生成 spec
+    gen_spec "$app" "$latest_ver" "$repo" "$ftype" "$download_url" "$binary" "$strip" "$icon_name" "$exec_prefix"
+
+    # 构建 SRPM
+    echo "===== 构建 SRPM ====="
+    rpmbuild -bs "$HOME/rpmbuild/SPECS/${app}.spec" || { echo "错误: SRPM 构建失败"; exit 1; }
+
+    # 提交 COPR
+    echo "===== 提交到 COPR: $copr_repo ====="
+    if copr-cli list "$copr_repo" &>/dev/null; then
+        copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc44.src.rpm"
+    else
+        echo "  仓库 $copr_repo 不存在，正在创建..."
+        copr-cli create "$copr_repo" --chroot fedora-44-x86_64 --description "第三方应用软件仓库"
+        copr-cli build "$copr_repo" "$HOME/rpmbuild/SRPMS/${app,,}-${latest_ver}-1.fc44.src.rpm"
+    fi
+
+    echo "===== 完成 ====="
+    echo "  COPR: https://copr.fedorainfracloud.org/coprs/$(whoami)/${copr_repo}/"
+}
+
 # ---------- 入口 ----------
 [ $# -ge 1 ] || usage
 
 case "$1" in
     install)  shift; cmd_install "$@" ;;
-    remove)   cmd_remove   "${2:-}" ;;
+    remove)   shift; cmd_remove  "$@" ;;
     rollback) cmd_rollback "${2:-}" ;;
     skip)     cmd_skip     "${2:-}" ;;
     unskip)   cmd_unskip   "${2:-}" ;;
-    info)     cmd_info     "${2:-}" ;;
+    info)     cmd_info     "${2:-}" ;; 
     cleanup)  shift; cmd_cleanup "$@" ;;
     clean)    shift; cmd_cleanup "$@" ;;
     list)     cmd_list ;;
     set-repo) cmd_set_repo "${2:-}" "$3" "$4" ;;
-    check)    cmd_check    "${2:-}" ;;
+    conf)     shift; cmd_conf "$@" ;;
+    check)    cmd_check    "${2:-}" ;; 
     upgrade)  cmd_upgrade  "${2:-}" ;;
-    *)        usage ;;
+    build)    shift; cmd_build "$@" ;;
+    *)        usage ;; 
 esac
