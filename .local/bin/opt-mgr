@@ -188,7 +188,13 @@ resolve_icon() {
         name="${app}-icon.${ext}"
         dest="${dest_dir}/${name}"
         >&2 echo "  下载图标: $src"
-        download_file "$src" "$dest" >&2 2>&1 || return 1
+        download_file "$src" "$dest" >&2 2>&1 || { >&2 echo "  错误: 图标下载失败"; return 1; }
+        # 检查是否为 HTML 错误页
+        if head -c1 "$dest" 2>/dev/null | grep -q '<\|{'; then
+            >&2 echo "  错误: 图标文件无效 (可能是404)"
+            rm -f "$dest"
+            return 1
+        fi
         echo "$dest"
     elif [ -f "$src" ]; then
         ext="${src##*.}"
@@ -1348,6 +1354,20 @@ cmd_build() {
     init_conf
     mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SPECS"
 
+    # 提前检查图标（避免下载完再报错）
+    if [ -n "$icon_opt" ]; then
+        local resolved=$(resolve_icon "$icon_opt" "$HOME/rpmbuild/SOURCES" "$app" "$repo")
+        if [ -n "$resolved" ]; then
+            icon_name=$(basename "$resolved")
+            echo "  图标: $icon_name"
+        else
+            echo "错误: 图标获取失败"
+            echo "  请检查路径: $icon_opt"
+            [ -n "$repo" ] && echo "  完整 URL: https://raw.githubusercontent.com/${repo}/main/${icon_opt#/}"
+            exit 1
+        fi
+    fi
+
     # 获取最新 release
     local json
     json=$(gh_api_latest "$repo")
@@ -1420,18 +1440,9 @@ for a in data.get('assets', []):
             ;;
     esac
 
-    # 处理 --icon
-    if [ -z "$icon_name" ] && [ -n "$icon_opt" ]; then
-        local resolved=$(resolve_icon "$icon_opt" "$HOME/rpmbuild/SOURCES" "$app" "$repo")
-        if [ -n "$resolved" ]; then
-            icon_name=$(basename "$resolved")
-            echo "  图标: $icon_name"
-        fi
-    fi
-
     if [ -z "$icon_name" ] && [ "$ftype" != "jar" ] && [ "$ftype" != "rpm" ]; then
         echo "错误: 需要 --icon <路径|URL>"
-        echo "  相对路径会自动拼接为: https://raw.githubusercontent.com/${repo}/main/<路径>"
+        echo "  相对路径: https://raw.githubusercontent.com/${repo}/main/<路径>"
         rm -f "$source_path"
         exit 1
     fi
