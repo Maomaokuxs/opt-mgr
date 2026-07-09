@@ -1115,7 +1115,7 @@ cmd_conf() {
     done
 
     [ -z "$repo" ] && repo=$(get_conf "$app" "repo")
-    [ -z "$repo" ] && { echo "用法: opt-mgr conf <应用名> --repo owner/repo [--type tar|jar|appimage] [--pattern 模式] [--icon url/路径]"; exit 1; }
+    [ -z "$repo" ] && { echo "错误: 需要 --repo owner/repo"; echo "格式: opt-mgr conf <应用名> --repo owner/repo [--type tar|jar|appimage] [--pattern 模式] [--icon url]"; exit 1; }
 
     [ -z "$app_type" ] && app_type=$(get_conf "$app" "type")
     [ -z "$pattern" ] && pattern=$(get_conf "$app" "asset_pattern")
