@@ -690,14 +690,14 @@ cmd_remove() {
     if [ "$app_type" = "rpm" ]; then
         echo "  RPM 包请用 dnf 管理: sudo dnf remove $(get_conf "$app" "binary" | sed 's/-[0-9].*//')"
         rm -f "$HOME/.local/share/applications/${app}.desktop"
-        rm -f "/usr/local/bin/$app"
+        sudo rm -f "/usr/local/bin/$app" 2>/dev/null
         $purge && rm -f "$CONF_DIR/${app}.conf"
     else
         if [ -d "$target_dir" ]; then
             sudo rm -rf "$target_dir"
         fi
         rm -f "$HOME/.local/share/applications/${app}.desktop"
-        rm -f "/usr/local/bin/$app"
+        sudo rm -f "/usr/local/bin/$app" 2>/dev/null
         $purge && rm -f "$CONF_DIR/${app}.conf"
     fi
     $purge && echo "  已清除配置: $CONF_DIR/${app}.conf"
