@@ -311,7 +311,7 @@ cmd_install() {
         fi
         local conf_type=$(get_conf "$app" "type")
         [ -z "$app_type" ] && app_type="$conf_type"
-        local pat=$(get_conf "$app" "asset_pattern")
+        local pat="${pattern:-$(get_conf "$app" "asset_pattern")}"
         pat="${pat:-$(default_pattern "$app_type")}"
         if [ -z "$app_type" ] && [ -z "$(get_conf "$app" "asset_pattern")" ]; then
             >&2 echo "提示: 未指定类型和匹配模式，将下载匹配的第一个文件"
@@ -423,11 +423,17 @@ cmd_install() {
             fi
             ;;
 
-        appimage|file)
+        appimage)
             binary="$name"
+            if ! command -v fusermount &>/dev/null; then
+                echo "  -> 安装 FUSE 依赖..."
+                sudo dnf install -y fuse 2>/dev/null || true
+            fi
             sudo cp "$file" "${target_dir}/$name"
             sudo chmod +x "${target_dir}/$name"
-            echo "  -> 已复制: $name"
+            sudo mkdir -p /usr/local/bin
+            sudo ln -sf "${target_dir}/$name" "/usr/local/bin/$app"
+            echo "  -> 已复制: $name (终端: $app)"
 
             if [ -n "$exec_prefix" ]; then
                 exec_cmd="${exec_prefix/\{\}/\"${target_dir}/$name\"}"
@@ -445,6 +451,31 @@ cmd_install() {
                     sudo cp "$resolved" "${target_dir}/$icon_name"
                     icon="${target_dir}/$icon_name"
                     rm -f "$resolved"
+                fi
+            fi
+            ;;
+        file)
+            binary="$name"
+            sudo cp "$file" "${target_dir}/$name"
+            sudo chmod +x "${target_dir}/$name"
+            echo "  -> 已复制: $name"
+
+            if [ -n "$exec_prefix" ]; then
+                exec_cmd="${exec_prefix/\{\}/\"${target_dir}/$name\"}"
+            else
+                exec_cmd="${target_dir}/$name"
+            fi
+
+            set_conf "$app" "type" "$ftype"
+            set_conf "$app" "binary" "$binary"
+
+            if [ -n "$icon_opt" ]; then
+                local resolved2=$(resolve_icon "$icon_opt" "/tmp" "$app" "$repo")
+                if [ -n "$resolved2" ]; then
+                    local icon_name2=$(basename "$resolved2")
+                    sudo cp "$resolved2" "${target_dir}/$icon_name2"
+                    icon="${target_dir}/$icon_name2"
+                    rm -f "$resolved2"
                 fi
             fi
             ;;
@@ -659,12 +690,14 @@ cmd_remove() {
     if [ "$app_type" = "rpm" ]; then
         echo "  RPM 包请用 dnf 管理: sudo dnf remove $(get_conf "$app" "binary" | sed 's/-[0-9].*//')"
         rm -f "$HOME/.local/share/applications/${app}.desktop"
+        rm -f "/usr/local/bin/$app"
         $purge && rm -f "$CONF_DIR/${app}.conf"
     else
         if [ -d "$target_dir" ]; then
             sudo rm -rf "$target_dir"
         fi
         rm -f "$HOME/.local/share/applications/${app}.desktop"
+        rm -f "/usr/local/bin/$app"
         $purge && rm -f "$CONF_DIR/${app}.conf"
     fi
     $purge && echo "  已清除配置: $CONF_DIR/${app}.conf"
@@ -793,11 +826,11 @@ gh_api_latest() {
 download_file() {
     local url="$1" dest="$2"
     if command -v wget &>/dev/null; then
-        wget -q --show-progress -O "$dest" "$url"
+        wget -q -O "$dest" "$url"
     elif command -v aria2c &>/dev/null; then
-        aria2c -q --console-log-level=error --show-console-readout=true -o "$dest" "$url"
+        aria2c -q -o "$dest" "$url"
     else
-        curl -fSL --progress-bar -o "$dest" "$url"
+        curl -fsSL -o "$dest" "$url"
     fi
 }
 
