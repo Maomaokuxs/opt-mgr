@@ -168,6 +168,12 @@ Categories=Utility;
 StartupWMClass=${app^}
 DESKTOP
     echo "  桌面快捷方式已创建: $desktop_file"
+    command -v update-desktop-database &>/dev/null && update-desktop-database -q "$HOME/.local/share/applications" 2>/dev/null || true
+}
+
+migrated_to_rpm() {
+    local app="$1"
+    rpm -q "$app" &>/dev/null && [ ! -d "/opt/$app" ]
 }
 
 # 解析图标：本地文件、相对路径或 URL，返回本地文件路径
@@ -852,6 +858,19 @@ cmd_check() {
         local repo=$(get_conf "$app" "repo")
         [ -z "$repo" ] && continue
 
+        if migrated_to_rpm "$app"; then
+            echo ""
+            echo "[$app] 仓库: $repo"
+            echo "    已迁移到 RPM (COPR), 跳过"
+            cat >&2 <<EOF
+
+$app 已通过 RPM 管理，可将配置文件备份后删除:
+  rm "$CONF_DIR/${app}.conf"
+  (spec 备份: $CONF_DIR/specs/${app}.spec)
+EOF
+            continue
+        fi
+
         local current_ver=$(get_conf "$app" "version")
         local app_type=$(get_conf "$app" "type")
         local pattern=$(get_conf "$app" "asset_pattern")
@@ -949,6 +968,12 @@ do_upgrade_one() {
     local app="$1" idx="${2:-1}" total="${3:-1}"
     local repo=$(get_conf "$app" "repo")
     [ -z "$repo" ] && return 1
+
+    if migrated_to_rpm "$app"; then
+        echo "[$idx/$total] $app: 已迁移到 RPM (COPR), 跳过"
+        echo "  可清理配置: rm $CONF_DIR/${app}.conf"
+        return 0
+    fi
 
     local target_dir=$(opt_dir "$app")
     local app_type=$(get_conf "$app" "type")
