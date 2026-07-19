@@ -1220,6 +1220,17 @@ cmd_conf() {
             set_conf "$app" "icon" "$icon_dest"
             rm -f "$tmp_icon"
             echo "  图标:   $icon_dest"
+
+            local desktop_file="$HOME/.local/share/applications/${app}.desktop"
+            if [ -f "$desktop_file" ]; then
+                if grep -q "^Icon=" "$desktop_file" 2>/dev/null; then
+                    sed -i "s|^Icon=.*|Icon=${icon_dest}|" "$desktop_file"
+                else
+                    sed -i "/^Exec=/a Icon=${icon_dest}" "$desktop_file"
+                fi
+                echo "  快捷方式已更新: $desktop_file"
+                command -v update-desktop-database &>/dev/null && update-desktop-database -q "$HOME/.local/share/applications" 2>/dev/null || true
+            fi
         else
             echo "错误: 图标下载失败，配置未保存"; exit 1
         fi
