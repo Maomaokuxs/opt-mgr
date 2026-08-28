@@ -1260,6 +1260,7 @@ conf_write() {
     local old=$(get_conf "$app" "$key")
     if [ -z "$old" ]; then
         set_conf "$app" "$key" "$value"
+        CONF_CHANGED=1
         echo "  + $key = $value"
     elif [ "$old" = "$value" ]; then
         echo "  = $key 未变 ($value)"
@@ -1271,6 +1272,7 @@ conf_write() {
         read -r -p "      覆盖? [y/N] " ans
         if [[ "$ans" =~ ^[Yy] ]]; then
             set_conf "$app" "$key" "$value"
+            CONF_CHANGED=1
             echo "      ✓ 已覆盖"
         else
             echo "      - 已跳过, 保留旧值"
@@ -1284,6 +1286,7 @@ cmd_conf() {
     local app=$(resolve_app "$app_input")
     local repo="" pattern="" app_type="" icon_opt=""
     local repo_set=false type_set=false pattern_set=false
+    CONF_CHANGED=0
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -1339,6 +1342,15 @@ cmd_conf() {
     echo "  类型:   $(get_conf "$app" "type")"
     echo "  匹配:   $(get_conf "$app" "asset_pattern")"
     echo "  文件:   $CONF_DIR/${app}.conf"
+
+    # 配置有变更且应用已安装 → 询问是否重装
+    if [ "$CONF_CHANGED" = "1" ] && [ -d "$(opt_dir "$app")" ]; then
+        local rein=""
+        read -r -p "  配置已变更, 是否重装 $app 以生效? [y/N] " rein
+        if [[ "$rein" =~ ^[Yy] ]]; then
+            cmd_reinstall "$app"
+        fi
+    fi
 }
 
 # ---------- spec 生成 ----------
