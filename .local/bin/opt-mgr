@@ -35,13 +35,6 @@ install / conf / build 公用选项:
   --icon <路径|URL>                                          # 图标 (支持本地文件和 GitHub raw URL)
   --exec <前缀>                                              # Exec 命令, {} 占位 (仅 install/build)
 
-install 选项:
-
-  --icon <路径>                                              # 指定图标文件
-  --exec <前缀>                                              # Exec前缀, {} 占位二进制路径
-  --repo <owner/repo>                                        # GitHub 仓库 (首次配置后自动检查更新)
-  --pattern <模式>                                           # asset 匹配模式 (可选, 自动按架构识别)
-
 支持的文件类型:
 
   .tar.gz / .tgz                                             # 解压到 /opt/<应用名>/
@@ -230,6 +223,22 @@ resolve_icon() {
 }
 
 # ---------- install ----------
+# 解析通用选项 (install/conf/build 三命令均支持), 未识别的参数放入 REST_ARGS
+# 注意: --exec 仅 install/build 支持, 不在通用范围内, 由各命令自行处理
+parse_common_opts() {
+    REST_ARGS=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --repo)    repo="$2"; shift ;;
+            --type)    app_type="$2"; shift ;;
+            --pattern) pattern="$2"; shift ;;
+            --icon)    icon_opt="$2"; shift ;;
+            *)         REST_ARGS+=("$1") ;;
+        esac
+        shift
+    done
+}
+
 cmd_install() {
     [ $# -ge 1 ] || usage
     local app="$1"
@@ -242,17 +251,15 @@ cmd_install() {
     fi
 
     local icon_opt="" exec_prefix="" repo="" pattern="" app_type="" local_only=false
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --icon)    icon_opt="$2"; shift ;;
-            --exec)    exec_prefix="$2"; shift ;;
-            --repo)    repo="$2"; shift ;;
-            --pattern) pattern="$2"; shift ;;
-            --type)    app_type="$2"; shift ;;
+    parse_common_opts "$@"
+    local i=0
+    while [ $i -lt ${#REST_ARGS[@]} ]; do
+        case "${REST_ARGS[$i]}" in
             --local)   local_only=true ;;
-            *) echo "未知选项: $1"; exit 1 ;;
+            --exec)    exec_prefix="${REST_ARGS[$((i+1))]}"; i=$((i+1)) ;;
+            *) echo "未知选项: ${REST_ARGS[$i]}"; exit 1 ;;
         esac
-        shift
+        i=$((i+1))
     done
 
     # 未显式指定图标时, 复用 conf 中已配置的图标
@@ -1288,15 +1295,17 @@ cmd_conf() {
     local repo_set=false type_set=false pattern_set=false
     CONF_CHANGED=0
 
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --repo)    repo="$2"; repo_set=true; shift ;;
-            --type)    app_type="$2"; type_set=true; shift ;;
-            --pattern) pattern="$2"; pattern_set=true; shift ;;
-            --icon)    icon_opt="$2"; shift ;;
-            *) echo "未知选项: $1"; exit 1 ;;
+    # 先检测哪些选项被显式传入
+    for a in "$@"; do
+        case "$a" in
+            --repo)    repo_set=true ;;
+            --type)    type_set=true ;;
+            --pattern) pattern_set=true ;;
         esac
-        shift
+    done
+    parse_common_opts "$@"
+    for rest in "${REST_ARGS[@]}"; do
+        echo "未知选项: $rest"; exit 1
     done
 
     [ -z "$repo" ] && repo=$(get_conf "$app" "repo")
@@ -1504,17 +1513,15 @@ cmd_build() {
 
     local app=$(resolve_app "$app_input")
     local repo="" copr_repo="apps" icon_opt="" exec_prefix="" pattern="" app_type=""
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --repo)    repo="$2"; shift ;;
-            --copr)    copr_repo="$2"; shift ;;
-            --icon)    icon_opt="$2"; shift ;;
-            --exec)    exec_prefix="$2"; shift ;;
-            --pattern) pattern="$2"; shift ;;
-            --type)    app_type="$2"; shift ;;
-            *) echo "未知选项: $1"; exit 1 ;;
+    parse_common_opts "$@"
+    local i=0
+    while [ $i -lt ${#REST_ARGS[@]} ]; do
+        case "${REST_ARGS[$i]}" in
+            --copr)    copr_repo="${REST_ARGS[$((i+1))]}"; i=$((i+1)) ;;
+            --exec)    exec_prefix="${REST_ARGS[$((i+1))]}"; i=$((i+1)) ;;
+            *) echo "未知选项: ${REST_ARGS[$i]}"; exit 1 ;;
         esac
-        shift
+        i=$((i+1))
     done
 
     [ -z "$repo" ] && repo=$(get_conf "$app" "repo")
