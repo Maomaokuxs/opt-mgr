@@ -93,11 +93,24 @@ set_conf() {
     local app="$1" key="$2" value="$3"
     local file="$CONF_DIR/${app}.conf"
     touch "$file"
-    if grep -q "^${key}=" "$file" 2>/dev/null; then
-        sed -i "s|^${key}=.*|${key}=${value}|" "$file"
-    else
-        echo "${key}=${value}" >> "$file"
-    fi
+    OM_KEY="$key" OM_VALUE="$value" OM_FILE="$file" python3 -c "
+import os
+key, value = os.environ['OM_KEY'], os.environ['OM_VALUE']
+path = os.environ['OM_FILE']
+try:
+    lines = open(path).read().splitlines()
+except FileNotFoundError:
+    lines = []
+found = False
+for i, line in enumerate(lines):
+    if line.startswith(key + '='):
+        lines[i] = key + '=' + value
+        found = True
+        break
+if not found:
+    lines.append(key + '=' + value)
+open(path, 'w').write('\n'.join(lines) + '\n')
+"
 }
 
 find_binary() {
