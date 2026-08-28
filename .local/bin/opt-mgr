@@ -1248,17 +1248,42 @@ cmd_info() {
 }
 
 # ---------- conf ----------
+# 追加或询问覆盖配置键 (已存在则展示新旧值并确认)
+conf_write() {
+    local app="$1" key="$2" value="$3"
+    local old=$(get_conf "$app" "$key")
+    if [ -z "$old" ]; then
+        set_conf "$app" "$key" "$value"
+        echo "  + $key = $value"
+    elif [ "$old" = "$value" ]; then
+        echo "  = $key 未变 ($value)"
+    else
+        echo "  ~ $key 已存在, 值不同:"
+        echo "      旧值: $old"
+        echo "      新值: $value"
+        local ans=""
+        read -r -p "      覆盖? [y/N] " ans
+        if [[ "$ans" =~ ^[Yy] ]]; then
+            set_conf "$app" "$key" "$value"
+            echo "      ✓ 已覆盖"
+        else
+            echo "      - 已跳过, 保留旧值"
+        fi
+    fi
+}
+
 cmd_conf() {
     [ $# -ge 1 ] || { echo "用法: opt-mgr conf <应用名> --repo owner/repo [选项]"; exit 1; }
     local app_input="$1"; shift
     local app=$(resolve_app "$app_input")
     local repo="" pattern="" app_type="" icon_opt=""
+    local repo_set=false type_set=false pattern_set=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --repo)    repo="$2"; shift ;;
-            --type)    app_type="$2"; shift ;;
-            --pattern) pattern="$2"; shift ;;
+            --repo)    repo="$2"; repo_set=true; shift ;;
+            --type)    app_type="$2"; type_set=true; shift ;;
+            --pattern) pattern="$2"; pattern_set=true; shift ;;
             --icon)    icon_opt="$2"; shift ;;
             *) echo "未知选项: $1"; exit 1 ;;
         esac
@@ -1272,9 +1297,9 @@ cmd_conf() {
     [ -z "$pattern" ] && pattern=$(get_conf "$app" "asset_pattern")
 
     init_conf
-    set_conf "$app" "repo" "$repo"
-    [ -n "$app_type" ] && set_conf "$app" "type" "$app_type"
-    [ -n "$pattern" ] && set_conf "$app" "asset_pattern" "$pattern"
+    $repo_set && conf_write "$app" "repo" "$repo"
+    $type_set && conf_write "$app" "type" "$app_type"
+    $pattern_set && conf_write "$app" "asset_pattern" "$pattern"
 
     # 处理 icon
     if [ -n "$icon_opt" ]; then
@@ -1284,7 +1309,7 @@ cmd_conf() {
             local icon_dest="$CONF_DIR/icons/${app}.${icon_name##*.}"
             mkdir -p "$CONF_DIR/icons"
             cp "$tmp_icon" "$icon_dest"
-            set_conf "$app" "icon" "$icon_dest"
+            conf_write "$app" "icon" "$icon_dest"
             rm -f "$tmp_icon"
             echo "  图标:   $icon_dest"
 
@@ -1304,9 +1329,9 @@ cmd_conf() {
     fi
 
     echo "已配置 $app:"
-    echo "  仓库:   $repo"
-    echo "  类型:   ${app_type:-自动检测}"
-    echo "  匹配:   ${pattern:-自动检测}"
+    echo "  仓库:   $(get_conf "$app" "repo")"
+    echo "  类型:   $(get_conf "$app" "type")"
+    echo "  匹配:   $(get_conf "$app" "asset_pattern")"
     echo "  文件:   $CONF_DIR/${app}.conf"
 }
 
