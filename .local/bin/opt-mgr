@@ -13,6 +13,7 @@ usage() {
 用法:
 
   opt-mgr install  <应用名> [文件] [选项]                    # 安装或更新 (无文件=自动下载)
+  opt-mgr reinstall <应用名> [选项]                           # 重装 (删目录后重新安装, 保留配置)
   opt-mgr remove   <应用名> [--purge]                        # 卸载, 默认保留配置
   opt-mgr conf     <应用名> --repo owner/repo [选项]         # 仅创建配置, 不安装
   opt-mgr list                                               # 查看所有已管理应用
@@ -132,8 +133,8 @@ default_pattern() {
     local ftype="$1"
     local archs=($(detect_arch))
     case "$ftype" in
-        rpm)    echo "*${archs[0]}.rpm" ;;
-        tar)    echo "*linux_*.tar.gz" ;;
+        rpm)    echo "*${archs[0]}.rpm|*${archs[1]}.rpm" ;;
+        tar)    echo "*linux*.tar.gz|*.tar.gz" ;;
         appimage) echo "*.AppImage" ;;
         jar)    echo "*.jar" ;;
         *)      echo "*linux*${archs[0]}*|*linux*${archs[1]}*|*linux*x86-64*|*linux*" ;;
@@ -274,13 +275,13 @@ cmd_install() {
     $local_only && { echo "错误: --local 需要提供安装文件"; exit 1; }
 
     local target_dir="/opt/$app"
-    local real_dir=$(opt_dir "$app")
-    if [ -d "$real_dir" ] && [ -n "$repo" ] && [ -z "$file" ]; then
+    local existing_dir=$(opt_dir "$app")
+    if [ -d "$existing_dir" ] && [ -n "$repo" ] && [ -z "$file" ]; then
         local existing_binary=$(get_conf "$app" "binary")
-        if [ -n "$existing_binary" ] && [ -f "$real_dir/$existing_binary" ]; then
+        if [ -n "$existing_binary" ] && [ -f "$existing_dir/$existing_binary" ]; then
             # 已有安装 + --repo + 无文件 → 仅补仓库信息
             init_conf
-            set_conf "$app" "opt_dir" "$real_dir"
+            set_conf "$app" "opt_dir" "$existing_dir"
             set_conf "$app" "repo" "$repo"
             local existing_pat=$(get_conf "$app" "asset_pattern")
             if [ -n "$pattern" ]; then
@@ -297,7 +298,7 @@ cmd_install() {
     fi
 
     # 已存在则走更新
-    if [ -d "$real_dir" ] && [ -n "$file" ]; then
+    if [ -d "$existing_dir" ] && [ -n "$file" ]; then
         echo "应用已存在, 执行更新..."
         cmd_update "$app" "$file"
         [ -n "$repo" ] && set_conf "$app" "repo" "$repo"
@@ -345,7 +346,7 @@ cmd_install() {
     fi
 
     # 已存在则走更新
-    if [ -d "$real_dir" ]; then
+    if [ -d "$existing_dir" ]; then
         echo "应用已存在, 执行更新..."
         cmd_update "$app" "$file"
         [ -n "$repo" ] && set_conf "$app" "repo" "$repo"
@@ -710,6 +711,35 @@ cmd_remove() {
     echo "===== 卸载完成 ====="
 }
 
+# ---------- reinstall ----------
+cmd_reinstall() {
+    [ $# -ge 1 ] || { echo "用法: opt-mgr reinstall <应用名> [install选项]"; exit 1; }
+    local app=$(resolve_app "$1")
+    shift
+
+    local target_dir=$(opt_dir "$app")
+    local app_type=$(get_conf "$app" "type")
+    echo "===== 重装 $app ====="
+
+    # rpm 类型交由 dnf 重装
+    if [ "$app_type" = "rpm" ]; then
+        local pkg=$(get_conf "$app" "binary" | sed 's/-[0-9].*//')
+        [ -n "$pkg" ] && sudo dnf reinstall -y "$pkg"
+        echo "===== 重装完成 ====="
+        return
+    fi
+
+    # 删除安装目录和桌面文件, 保留 .conf
+    if [ -d "$target_dir" ]; then
+        sudo rm -rf "$target_dir"
+        echo "  已删除: $target_dir"
+    fi
+    rm -f "$HOME/.local/share/applications/${app}.desktop"
+
+    # 重新安装 (传入 app 名和剩余参数, 无文件则自动下载)
+    cmd_install "$app" "$@"
+}
+
 # ---------- list ----------
 cmd_list() {
     echo "已管理的应用:"
@@ -820,6 +850,15 @@ gh_api_latest() {
     if [ "$http_code" = "403" ] && echo "$data" | grep -qi "rate limit"; then
             touch "$HOME/.cache/opt-mgr/rate_limited"
             return 2
+    fi
+
+    if [ "$http_code" = "401" ]; then
+        cat >&2 <<EOF
+
+⚠  GitHub token 无效 (401), 请更新 ~/.config/opt-mgr/github_token
+   或删除该文件改用匿名请求 (60次/小时)
+EOF
+        return 1
     fi
 
     if [ -n "$data" ] && [ "$http_code" = "200" ]; then
@@ -1555,6 +1594,7 @@ cmd_build() {
 
 case "$1" in
     install)  shift; cmd_install  "$@" ;;
+    reinstall) shift; cmd_reinstall "$@" ;;
     remove)   shift; cmd_remove   "$@" ;;
     conf)     shift; cmd_conf     "$@" ;;
     build)    shift; cmd_build    "$@" ;;

@@ -5,7 +5,7 @@ _opt_mgr_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     cmd="${COMP_WORDS[1]}"
 
-    local commands="install remove rollback skip unskip info list set-repo check upgrade clean build conf"
+    local commands="install reinstall remove rollback skip unskip info list set-repo check upgrade clean build conf"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -35,7 +35,7 @@ _opt_mgr_completion() {
                 COMPREPLY=($(compgen -W "${apps[*]}" -- "$cur"))
             fi
             ;;
-        install)
+        install|reinstall)
             if [ "$COMP_CWORD" -eq 2 ]; then
                 COMPREPLY=($(compgen -W "${apps[*]}" -f -- "$cur"))
             else
