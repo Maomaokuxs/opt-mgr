@@ -255,6 +255,12 @@ cmd_install() {
         shift
     done
 
+    # 未显式指定图标时, 复用 conf 中已配置的图标
+    if [ -z "$icon_opt" ]; then
+        local stored_icon=$(get_conf "$app" "icon")
+        [ -n "$stored_icon" ] && [ -f "$stored_icon" ] && icon_opt="$stored_icon"
+    fi
+
     # 纯本地安装：跳过仓库配置和 .conf 创建
     if $local_only && [ -n "$file" ]; then
         local target_dir="/opt/$app"
