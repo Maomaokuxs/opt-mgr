@@ -297,14 +297,6 @@ cmd_install() {
         fi
     fi
 
-    # 已存在则走更新
-    if [ -d "$existing_dir" ] && [ -n "$file" ]; then
-        echo "应用已存在, 执行更新..."
-        cmd_update "$app" "$file"
-        [ -n "$repo" ] && set_conf "$app" "repo" "$repo"
-        return
-    fi
-
     # 无文件 + 有仓库 → 自动下载
     if [ -z "$file" ]; then
         [ -z "$repo" ] && repo=$(get_conf "$app" "repo")
@@ -328,8 +320,8 @@ cmd_install() {
         local latest_tag=$(gh_tag_name "$json")
         local latest_ver=$(extract_version "$latest_tag")
         local current_ver=$(get_conf "$app" "version")
-        local target_dir=$(opt_dir "$app")
-        if [ -d "$target_dir" ] && [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ]; then
+        local check_dir=$(opt_dir "$app")
+        if [ -d "$check_dir" ] && [ -n "$current_ver" ] && [ "$current_ver" = "$latest_ver" ]; then
             echo "已是最新版本 ($current_ver)"
             return 0
         fi
@@ -695,7 +687,13 @@ cmd_remove() {
 
     echo "===== 卸载 $app ====="
     if [ "$app_type" = "rpm" ]; then
-        echo "  RPM 包请用 dnf 管理: sudo dnf remove $(get_conf "$app" "binary" | sed 's/-[0-9].*//')"
+        local pkg=$(get_conf "$app" "binary" | sed 's/-[0-9].*//')
+        if [ -n "$pkg" ] && rpm -q "$pkg" &>/dev/null; then
+            echo "  卸载 RPM 包: $pkg"
+            sudo dnf remove -y "$pkg"
+        else
+            echo "  未找到已安装的 RPM 包: ${pkg:-无}"
+        fi
         rm -f "$HOME/.local/share/applications/${app}.desktop"
         sudo rm -f "/usr/local/bin/$app" 2>/dev/null
         $purge && rm -f "$CONF_DIR/${app}.conf"
@@ -776,11 +774,20 @@ cmd_list() {
 
 # ---------- set-repo ----------
 cmd_set_repo() {
-    [ $# -ge 2 ] || { echo "用法: opt-mgr set-repo <应用名> <owner/repo> [asset匹配模式]"; exit 1; }
+    [ $# -ge 1 ] || { echo "用法: opt-mgr set-repo <应用名> <owner/repo> [asset匹配] 或 --repo <owner/repo> [--pattern 模式]"; exit 1; }
     [[ "$1" == -* ]] && { echo "错误: set-repo 第一个参数应为应用名，不是选项"; exit 1; }
     local app=$(resolve_app "$1"); shift
-    local repo="${1:-}" pattern="${2:-}"
-    [ -n "$repo" ] || { echo "用法: opt-mgr set-repo <应用名> <owner/repo> [asset匹配模式]"; exit 1; }
+    local repo="" pattern=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --repo)    repo="$2"; shift ;;
+            --pattern) pattern="$2"; shift ;;
+            -*)        echo "未知选项: $1"; exit 1 ;;
+            *)         [ -z "$repo" ] && repo="$1" || pattern="$1" ;;
+        esac
+        shift
+    done
+    [ -n "$repo" ] || { echo "用法: opt-mgr set-repo <应用名> <owner/repo> [asset匹配模式] 或 --repo <owner/repo>"; exit 1; }
     [ -f "$CONF_DIR/${app}.conf" ] || { echo "错误: $app 未通过 opt-mgr 管理"; exit 1; }
 
     set_conf "$app" "repo" "$repo"
@@ -807,17 +814,20 @@ gh_tag_name()    { echo "$1" | python3 -c "import sys,json; print(json.load(sys.
 gh_published()   { echo "$1" | python3 -c "import sys,json; print(json.load(sys.stdin).get('published_at','')[:10])" 2>/dev/null; }
 
 match_asset() {
-    [[ "$2" == *"|"* ]] && local patterns="$2" || local patterns="${2:-*}"
-    local json="$1" mode="${3:-url}"
+    local json="$1" patterns="${2:-*}" mode="${3:-url}"
+    export OM_PATTERN="$patterns" OM_MODE="$mode"
     echo "$json" | python3 -c "
-import sys, json, fnmatch
+import sys, json, fnmatch, os
 data = json.load(sys.stdin)
-for p in '''${patterns}'''.split('|'):
+patterns = os.environ['OM_PATTERN']
+mode = os.environ['OM_MODE']
+for p in patterns.split('|'):
     for a in data.get('assets', []):
         if fnmatch.fnmatch(a['name'], p.strip()):
-            print(a['browser_download_url'] if '$mode' == 'url' else a['name'])
+            print(a['browser_download_url'] if mode == 'url' else a['name'])
             sys.exit(0)
 " 2>/dev/null
+    unset OM_PATTERN OM_MODE
 }
 
 # ---------- GitHub API ----------
@@ -1195,6 +1205,11 @@ cmd_info() {
     local pat=$(get_conf "$app" "asset_pattern")
     [ -n "$pat" ] && echo "  匹配模式: $pat"
     [ "$skip" = "1" ] && echo "  批量升级: 已排除"
+
+    if migrated_to_rpm "$app"; then
+        echo "  状态:     已迁移到 RPM (COPR), 请用 dnf 管理"
+        return
+    fi
 
     if [ -n "$repo" ]; then
         local json api_rc
@@ -1603,7 +1618,7 @@ case "$1" in
     skip)     cmd_skip     "${2:-}" ;;
     unskip)   cmd_unskip   "${2:-}" ;;
     info)     cmd_info     "${2:-}" ;;
-    set-repo) cmd_set_repo "${2:-}" "$3" "$4" ;;
+    set-repo) shift; cmd_set_repo "$@" ;;
     check)    cmd_check    "${2:-}" ;;
     upgrade)  cmd_upgrade  "${2:-}" ;;
     list)     cmd_list ;;
