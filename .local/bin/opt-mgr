@@ -148,7 +148,7 @@ default_pattern() {
     case "$ftype" in
         rpm)    echo "*${archs[0]}.rpm|*${archs[1]}.rpm" ;;
         tar)    echo "*linux*.tar.gz|*.tar.gz" ;;
-        appimage) echo "*.AppImage" ;;
+        appimage) echo "*.appimage|*.AppImage" ;;
         jar)    echo "*.jar" ;;
         *)      echo "*linux*${archs[0]}*|*linux*${archs[1]}*|*linux*x86-64*|*linux*" ;;
     esac
@@ -159,7 +159,7 @@ detect_file_type() {
         *.tar.gz|*.tgz|*.tar.xz) echo "tar" ;;
         *.jar)           echo "jar" ;;
         *.rpm)           echo "rpm" ;;
-        *.AppImage)      echo "appimage" ;;
+        *.appimage|*.AppImage) echo "appimage" ;;
         *)               echo "file" ;;
     esac
 }
